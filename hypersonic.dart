@@ -4,10 +4,9 @@ import 'dart:math';
 List<List<String>> map = [];
 int width;
 int height;
-List<int> toDestroy;
 Map<int, Map> players = {};
-Map<int, Map> bombs = {};
 int range = 3;
+int countdown = 8;
 
 void main() {
     List inputs;
@@ -16,7 +15,6 @@ void main() {
     height = int.parse(inputs[1]);
     int myId = int.parse(inputs[2]);
     Point target, targetPos;
-    List<Point> toDestroy = [];
     // game loop
     while (true) {
         stderr.writeln('loop');
@@ -27,7 +25,7 @@ void main() {
             map.add(a.split(''));
         }
         players.clear();
-        bombs.clear();
+        BombsWatcher bombsWatcher = new BombsWatcher();
         int entities = int.parse(stdin.readLineSync());
         for (int i = 0; i < entities; i++) {
             inputs = stdin.readLineSync().split(' ');
@@ -38,8 +36,8 @@ void main() {
             int param2 = int.parse(inputs[5]);
             if (entityType==0) {
                 players[owner] = {'pos': pos, 'bombs': param1, 'range': param2};
-            } else {
-                bombs[owner] = {'pos': pos, 'countdown': param1, 'range': param2};
+            } else if (entityType==1) {
+                bombsWatcher.addBomb(pos, {'owner': owner, 'countdown': param1, 'range': param2});
             }
         }
         var action = null;
@@ -48,6 +46,7 @@ void main() {
         var targetType = targetPos != null ? cellType(targetPos) : null;
         if (target != null && myLocation==target && players[myId]['bombs']>0 && targetType['box']) {
             stderr.writeln('BOMB!!!');
+            bombsWatcher.addBomb(target, {'owner': myId, 'countdown': countdown, 'range': players[myId]['range']});
             action = 'BOMB';
             target = null;
         }
@@ -56,11 +55,12 @@ void main() {
             stderr.writeln('searching');
             var spiralProcessor = new SpiralProcessor(map, myLocation);
             var box, boxes = {};
+            var affectedBoxes = bombsWatcher.getAffectedBoxes();
             while ((box = spiralProcessor.getNext()) != null) {
                 stderr.writeln('box near ${box}');
-                if (toDestroy.contains(box))
+                if (affectedBoxes.contains(box))
                 {
-                    stderr.writeln('we contain it');
+                    stderr.writeln("it's marked as 'to destroy'");
                     continue;
                 }
                 var path = AStar.path(myLocation, box);
@@ -80,14 +80,53 @@ void main() {
                 target = box['target'];
                 targetPos = box['pos'];
                 stderr.writeln('target ${target}');
-                stderr.writeln('toDestroy ${box['pos']}');
-                toDestroy.add(targetPos);
-                stderr.writeln('toDestroy ${toDestroy}');
+                stderr.writeln('toDestroy ${targetPos}');
             }
         }
         print((action != null ? action : 'MOVE')+' ${target.x} ${target.y}');
         stderr.writeln('end');
     }
+}
+
+class BombsWatcher {
+  Map<Point, Map> _bombs = {};
+  static final List<List<int>> directions = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+
+  void addBomb(Point pos, Map info) {
+    _bombs[pos] = info;
+  }
+
+  List<Point> _getAffectedBoxes(Point pos, Map info) {
+    List<Point> boxes = [];
+    directions.forEach((direction) {
+      var i = 0;
+      while (true) {
+        var cell = new Point(pos.x+direction[0]*i, pos.y+direction[1]*i);
+        if (isOutOfMap(cell.x, cell.y))
+          break;
+        var type = cellType(cell);
+        // wall blocks fire
+        if (type['wall'])
+          break;
+        if (type['box']) {
+          stderr.writeln('to destroy cell ${cell} from ${pos} by dir ${direction}');
+          boxes.add(cell);
+          break;
+        }
+        i++;
+      }
+    });
+
+    return boxes;
+  }
+
+  List<Point> getAffectedBoxes() {
+    List<Point> boxes = [];
+    _bombs.forEach((pos, info) {
+      boxes.addAll(_getAffectedBoxes(pos, info));
+    });
+    return boxes;
+  }
 }
 
 List<int> getPositionBetween(List<int> point1, List<int> point2) {
@@ -129,7 +168,7 @@ class SpiralProcessor {
                 var x = _point.x+_nearest(radius*cos(_angle)),
                     y = _point.y+_nearest(radius*sin(_angle));
                 _angle += _angleFactor;
-                if (x < 0 || y < 0 || x >= width || y >= height)
+                if (isOutOfMap(x, y))
                     continue;
                 _cellsPerLoop[radius]++;
 
@@ -158,12 +197,17 @@ class SpiralProcessor {
     }
 }
 
+bool isOutOfMap(int x, int y) {
+  return x < 0 || y < 0 || y >= height || x >= width;
+}
+
 Map cellType(Point cell) {
     var val = map[cell.y][cell.x];
     return {
         'obstacle': val != '.',
         'box': int.parse(val, onError: (_) => null) != null,
-        'free': val == '.'
+        'free': val == '.',
+        'wall': val == 'X'
     };
 }
 
@@ -192,7 +236,7 @@ class AStar {
                 var x = current.x+neighborX[i];
                 var y = current.y+neighborY[i];
                 var neighbor = new Point(x, y);
-                if (x < 0 || y < 0 || y >= height || x >= width)
+                if (isOutOfMap(x, y))
                     continue;
                 var type = cellType(neighbor);
                 // boxes are obstacles, but only when it's not target box
