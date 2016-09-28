@@ -1,35 +1,73 @@
 import 'dart:io';
 import 'dart:math';
 
-List<List<String>> map = [];
-int width;
-int height;
-Map<int, Map> players = {};
 int range = 3;
 int countdown = 8;
-BombsWatcher bombsWatcher;
 
 void main() {
-    List inputs;
-    inputs = stdin.readLineSync().split(' ');
-    width = int.parse(inputs[0]);
-    height = int.parse(inputs[1]);
-    int myId = int.parse(inputs[2]);
-    Point target, targetPos;
-    // game loop
-    while (true) {
-        stderr.writeln('loop');
+    var game = new Game();
+    game.start();
+}
+
+class GameMap {
+    List<List<String>> map = [];
+    int width;
+    int height;
+
+    void updateFromInput() {
         map.clear();
         for (int i = 0; i < height; i++) {
             var a = stdin.readLineSync();
             stderr.writeln(a);
             map.add(a.split(''));
         }
+    }
+
+    bool isOutOfMap(int x, int y) {
+        return x < 0 || y < 0 || y >= height || x >= width;
+    }
+
+    Map cellType(Point cell) {
+        var val = map[cell.y][cell.x];
+        return {
+            'obstacle': val != '.',
+            'box': int.parse(val, onError: (_) => null) != null,
+            'free': val == '.',
+            'wall': val == 'X'
+        };
+    }
+}
+
+class Game {
+    Map<int, Map> players = {};
+    int myId;
+    Point target, targetPos, myLocation;
+    GameMap map;
+    BombsWatcher bombsWatcher;
+    Map targetType;
+    String nextAction;
+
+    void start() {
+        map = new GameMap();
+        _readInput();
+        while (true) {
+            _loop();
+        }
+    }
+
+    void _readInput() {
+        List inputs = stdin.readLineSync().split(' ');
+        map.width = int.parse(inputs[0]);
+        map.height = int.parse(inputs[1]);
+        myId = int.parse(inputs[2]);
+    }
+
+    void _readEntities() {
         players.clear();
-        bombsWatcher = new BombsWatcher();
+        bombsWatcher = new BombsWatcher(map);
         int entities = int.parse(stdin.readLineSync());
         for (int i = 0; i < entities; i++) {
-            inputs = stdin.readLineSync().split(' ');
+            List inputs = stdin.readLineSync().split(' ');
             int entityType = int.parse(inputs[0]);
             int owner = int.parse(inputs[1]);
             Point pos = new Point(int.parse(inputs[2]), int.parse(inputs[3]));
@@ -38,25 +76,29 @@ void main() {
             if (entityType==0) {
                 players[owner] = {'pos': pos, 'bombs': param1, 'range': param2};
             } else if (entityType==1) {
-                bombsWatcher.addBomb(pos, {'owner': owner, 'countdown': param1, 'range': param2});
+                bombsWatcher.addBomb(pos, {'owner': owner, 'countdown': param1,
+                    'range': param2});
             }
         }
-        var action = null;
-        var myLocation = players[myId]['pos']/*new Point(5,0)*/;
-        stderr.writeln('before algo');
-        var targetType = targetPos != null ? cellType(targetPos) : null;
+    }
+
+    void _checkSettle() {
         if (target != null && myLocation==target && players[myId]['bombs']>0 && targetType['box']) {
             stderr.writeln('BOMB!!!');
             bombsWatcher.addBomb(target, {'owner': myId, 'countdown': countdown, 'range': players[myId]['range']});
-            action = 'BOMB';
+            nextAction = 'BOMB';
             target = null;
         }
+    }
+
+    void _checkTarget() {
         // if no target or target box was already destroyed
         if (target == null || !targetType['box']) {
             stderr.writeln('searching');
             var spiralProcessor = new SpiralProcessor(map, myLocation);
             var box, boxes = {};
             var affectedBoxes = bombsWatcher.getAffectedBoxes();
+            var aStar = new AStar(map, bombsWatcher);
             while ((box = spiralProcessor.getNext()) != null) {
                 stderr.writeln('box near ${box}');
                 if (affectedBoxes.contains(box))
@@ -64,15 +106,15 @@ void main() {
                     stderr.writeln("it's marked as 'to destroy'");
                     continue;
                 }
-                var path = AStar.path(myLocation, box);
+                var path = aStar.path(myLocation, box);
                 if (path == null)
-                  continue;
+                    continue;
                 boxes[path.length] = {'target': path[1],
                     'pos': path[0]};
             }
             // the last box where we settled a bomb. no more boxes.
             if (boxes.isEmpty) {
-                target = new Point(0, 0);
+                target = myLocation;
             } else {
                 var distances = boxes.keys.toList();
                 stderr.writeln('distances ${distances}');
@@ -84,7 +126,19 @@ void main() {
                 stderr.writeln('toDestroy ${targetPos}');
             }
         }
-        print((action != null ? action : 'MOVE')+' ${target.x} ${target.y}');
+    }
+
+    void _loop() {
+        stderr.writeln('loop');
+        map.updateFromInput();
+        _readEntities();
+        myLocation = players[myId]['pos']/*new Point(5,0)*/;
+        stderr.writeln('before algo');
+        targetType = targetPos != null ? map.cellType(targetPos) : null;
+        nextAction = null;
+        _checkSettle();
+        _checkTarget();
+        print((nextAction != null ? nextAction : 'MOVE')+' ${target.x} ${target.y}');
         stderr.writeln('end');
     }
 }
@@ -92,6 +146,9 @@ void main() {
 class BombsWatcher {
   Map<Point, Map> _bombs = {};
   static final List<List<int>> directions = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+  GameMap _map;
+
+  BombsWatcher(this._map);
 
   void addBomb(Point pos, Map info) {
     _bombs[pos] = info;
@@ -100,12 +157,11 @@ class BombsWatcher {
   List<Point> _getAffectedBoxes(Point pos, Map info) {
     List<Point> boxes = [];
     directions.forEach((direction) {
-      var i = 0;
-      while (true) {
+      for (var i = 1; i < info['range']; i++) {
         var cell = new Point(pos.x+direction[0]*i, pos.y+direction[1]*i);
-        if (isOutOfMap(cell.x, cell.y))
+        if (_map.isOutOfMap(cell.x, cell.y))
           break;
-        var type = cellType(cell);
+        var type = _map.cellType(cell);
         // wall blocks fire
         if (type['wall'])
           break;
@@ -114,7 +170,6 @@ class BombsWatcher {
           boxes.add(cell);
           break;
         }
-        i++;
       }
     });
 
@@ -134,7 +189,7 @@ class BombsWatcher {
   }
 }
 
-List<int> getPositionBetween(List<int> point1, List<int> point2) {
+/*List<int> getPositionBetween(List<int> point1, List<int> point2) {
     return [(point1[0]-point2[0]).abs().toInt(),
         (point1[1]-point2[1]).abs().toInt()];
 }
@@ -150,7 +205,7 @@ List<List<int>> getBoxesNear(List<int> point, int range) {
         });
     }
     return boxes;
-}
+}*/
 
 class SpiralProcessor {
     Point _current;
@@ -159,9 +214,11 @@ class SpiralProcessor {
     bool _isEnd = false;
     double _angle = 0.0;
     Map _cellsPerLoop = {};
+    GameMap _map;
 
-    SpiralProcessor(List<List<String>> map, Point point) {
+    SpiralProcessor(GameMap map, Point point) {
         _point = point;
+        _map = map;
     }
 
     Point getNext() {
@@ -173,11 +230,11 @@ class SpiralProcessor {
                 var x = _point.x+_nearest(radius*cos(_angle)),
                     y = _point.y+_nearest(radius*sin(_angle));
                 _angle += _angleFactor;
-                if (isOutOfMap(x, y))
+                if (_map.isOutOfMap(x, y))
                     continue;
                 _cellsPerLoop[radius]++;
 
-                if (cellType(new Point(x, y))['box']) {
+                if (_map.cellType(new Point(x, y))['box']) {
                     _current = new Point(x, y);
                     isFound = true;
                     break;
@@ -202,23 +259,13 @@ class SpiralProcessor {
     }
 }
 
-bool isOutOfMap(int x, int y) {
-  return x < 0 || y < 0 || y >= height || x >= width;
-}
-
-Map cellType(Point cell) {
-    var val = map[cell.y][cell.x];
-    return {
-        'obstacle': val != '.' || bombsWatcher.isBomb(cell),
-        'box': int.parse(val, onError: (_) => null) != null,
-        'free': val == '.',
-        'wall': val == 'X',
-        'bomb': bombsWatcher.isBomb(cell)
-    };
-}
-
 class AStar {
-    static List<Point> path(Point from, Point to) {
+    GameMap _map;
+    BombsWatcher bombsWatcher;
+
+    AStar(this._map, this.bombsWatcher);
+
+    List<Point> path(Point from, Point to) {
         stderr.writeln('searching path');
         stderr.writeln(from);
         stderr.writeln(to);
@@ -242,11 +289,11 @@ class AStar {
                 var x = current.x+neighborX[i];
                 var y = current.y+neighborY[i];
                 var neighbor = new Point(x, y);
-                if (isOutOfMap(x, y))
+                if (_map.isOutOfMap(x, y))
                     continue;
-                var type = cellType(neighbor);
+                var type = _map.cellType(neighbor);
                 // boxes are obstacles, but only when it's not target box
-                if (neighbor != to && type['obstacle'])
+                if (neighbor != to && (type['obstacle'] || bombsWatcher.isBomb(neighbor)))
                     continue;
                 if (closedSet.contains(neighbor))
                     continue;
@@ -263,7 +310,7 @@ class AStar {
         return null;
     }
 
-    static List<Point> _getPath(Map cameFrom, Point current) {
+    List<Point> _getPath(Map cameFrom, Point current) {
         var totalPath = [current];
         while (cameFrom.containsKey(current)) {
             current = cameFrom[current];
