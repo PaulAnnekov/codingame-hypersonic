@@ -45,12 +45,14 @@ void main() {
         var action = null;
         var myLocation = players[myId]['pos']/*new Point(5,0)*/;
         stderr.writeln('before algo');
-        if (target != null && myLocation==target && players[myId]['bombs']>0 && map[targetPos.y][targetPos.x]=='0') {
+        var targetType = targetPos != null ? cellType(targetPos) : null;
+        if (target != null && myLocation==target && players[myId]['bombs']>0 && targetType['box']) {
             stderr.writeln('BOMB!!!');
             action = 'BOMB';
             target = null;
         }
-        if (target == null || map[targetPos.y][targetPos.x]!='0') {
+        // if no target or target box was already destroyed
+        if (target == null || !targetType['box']) {
             stderr.writeln('searching');
             var spiralProcessor = new SpiralProcessor(map, myLocation);
             var box, boxes = {};
@@ -96,7 +98,7 @@ List<List<int>> getBoxesNear(List<int> point, int range) {
     List<List<int>> boxes = [];
     for (var i = 1; i <= range; i++) {
         directions.forEach((direction) {
-            if (map[direction[0] * range][direction[1] * range] != '0')
+            if (!cellType(new Point(map[direction[0] * range], [direction[1] * range]))['box'])
                 return;
             boxes.add([direction[0] * range, direction[1] * range]);
         });
@@ -106,7 +108,6 @@ List<List<int>> getBoxesNear(List<int> point, int range) {
 
 class SpiralProcessor {
     Point _current;
-    List<List<String>> _map;
     Point _point;
     int radius = 1;
     bool _isEnd = false;
@@ -114,7 +115,6 @@ class SpiralProcessor {
     Map _cellsPerLoop = {};
 
     SpiralProcessor(List<List<String>> map, Point point) {
-        _map = map;
         _point = point;
     }
 
@@ -130,7 +130,8 @@ class SpiralProcessor {
                 if (x < 0 || y < 0 || x >= width || y >= height)
                     continue;
                 _cellsPerLoop[radius]++;
-                if (_map[y][x] == '0') {
+
+                if (cellType(new Point(x, y))['box']) {
                     _current = new Point(x, y);
                     isFound = true;
                     break;
@@ -155,11 +156,21 @@ class SpiralProcessor {
     }
 }
 
+Map cellType(Point cell) {
+    var val = map[cell.y][cell.x];
+    return {
+        'obstacle': val != '.',
+        'box': int.parse(val, onError: (_) => null) != null,
+        'free': val == '.'
+    };
+}
+
 class AStar {
     static List<Point> path(Point from, Point to) {
         stderr.writeln('searching path');
         stderr.writeln(from);
         stderr.writeln(to);
+        // game does not support diagonal moves
         var neighborX = [1, 0, -1, 0];
         var neighborY = [0, 1, 0, -1];
         Point current;
@@ -179,7 +190,11 @@ class AStar {
                 var x = current.x+neighborX[i];
                 var y = current.y+neighborY[i];
                 var neighbor = new Point(x, y);
-                if (x < 0 || y < 0 || y >= height || x >= width || (neighbor != to && map[y][x] == '0'))
+                if (x < 0 || y < 0 || y >= height || x >= width)
+                    continue;
+                var type = cellType(neighbor);
+                // boxes are obstacles, but only when it's not target box
+                if (neighbor != to && type['box'])
                     continue;
                 if (closedSet.contains(neighbor))
                     continue;
