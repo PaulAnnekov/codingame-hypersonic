@@ -64,6 +64,8 @@ void main() {
                     continue;
                 }
                 var path = AStar.path(myLocation, box);
+                if (path == null)
+                  continue;
                 boxes[path.length] = {'target': path[1],
                     'pos': path[0]};
             }
@@ -194,7 +196,7 @@ class AStar {
                     continue;
                 var type = cellType(neighbor);
                 // boxes are obstacles, but only when it's not target box
-                if (neighbor != to && type['box'])
+                if (neighbor != to && type['obstacle'])
                     continue;
                 if (closedSet.contains(neighbor))
                     continue;
@@ -208,7 +210,7 @@ class AStar {
                 fScore[neighbor] = gScore[neighbor] + neighbor.distanceTo(to);
             }
         }
-        throw new Exception("Can't find path from $from, to $to");
+        return null;
     }
 
     static List<Point> _getPath(Map cameFrom, Point current) {
