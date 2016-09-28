@@ -46,6 +46,7 @@ class Game {
     BombsWatcher bombsWatcher;
     Map targetType;
     String nextAction;
+    Point nextStep;
 
     void start() {
         map = new GameMap();
@@ -92,13 +93,13 @@ class Game {
     }
 
     void _checkTarget() {
-        // if no target or target box was already destroyed
-        if (target == null || !targetType['box']) {
+        var aStar = new AStar(map, bombsWatcher);
+        var affectedBoxes = bombsWatcher.getAffectedBoxes();
+        // if no target or target already destroyed or to be destroyed - find new target
+        if (target == null || (!targetType['box'] || affectedBoxes.contains(targetPos))) {
             stderr.writeln('searching');
             var spiralProcessor = new SpiralProcessor(map, myLocation);
             var box, boxes = {};
-            var affectedBoxes = bombsWatcher.getAffectedBoxes();
-            var aStar = new AStar(map, bombsWatcher);
             while ((box = spiralProcessor.getNext()) != null) {
                 stderr.writeln('box near ${box}');
                 if (affectedBoxes.contains(box))
@@ -109,23 +110,62 @@ class Game {
                 var path = aStar.path(myLocation, box);
                 if (path == null)
                     continue;
-                boxes[path.length] = {'target': path[1],
-                    'pos': path[0]};
+                boxes[path.length] = {'path': path};
             }
-            // the last box where we settled a bomb. no more boxes.
-            if (boxes.isEmpty) {
-                target = myLocation;
-            } else {
+            // if not the last box where we settled a bomb and no more boxes.
+            if (boxes.isNotEmpty) {
                 var distances = boxes.keys.toList();
                 stderr.writeln('distances ${distances}');
                 distances.sort();
                 box = boxes[distances[0]];
-                target = box['target'];
-                targetPos = box['pos'];
+                target = box['path'][1];
+                targetPos = box['path'][0];
+                nextStep = box['path'][box['path'].length-2];
                 stderr.writeln('target ${target}');
                 stderr.writeln('toDestroy ${targetPos}');
+                stderr.writeln('nextStep ${nextStep}');
             }
+        } else {
+            var path = aStar.path(myLocation, target);
+            stderr.writeln('next path ${path}');
+            // we can stay near target and wait till free bombs
+            nextStep = path.length > 1 ? path[path.length-2] : path[path.length-1];
         }
+    }
+
+    void _checkOnFire() {
+        var fireSides = bombsWatcher.isOnFire(nextStep);
+        if (fireSides.isEmpty)
+            return;
+        var currentFireSides = bombsWatcher.isOnFire(myLocation);
+        if (currentFireSides.isNotEmpty) {
+            List<List<int>> directions = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+            var choices = [];
+            directions.forEach((direction) {
+                var choice = new Point(myLocation.x+direction[0], myLocation.y+direction[1]);
+                if (map.isOutOfMap(choice.x, choice.y))
+                    return;
+                var type = map.cellType(choice);
+                if (currentFireSides.contains(choice) || type['obstacle'] ||
+                    bombsWatcher.isBomb(choice))
+                    return;
+                choices.add(choice);
+            });
+            nextStep = choices[0];
+        } else {
+            nextStep = myLocation;
+        }
+    }
+
+    void _checkEnemy() {
+        if (target != null)
+            return;
+        var haveBombs = players[myId]['bombs'] > 0;
+        Map tmp = new Map.from(players);
+        tmp.remove(myId);
+        nextStep = tmp[tmp.keys.first]['pos'];
+        if (haveBombs)
+            nextAction = 'BOMB';
     }
 
     void _loop() {
@@ -138,7 +178,9 @@ class Game {
         nextAction = null;
         _checkSettle();
         _checkTarget();
-        print((nextAction != null ? nextAction : 'MOVE')+' ${target.x} ${target.y}');
+        _checkEnemy();
+        _checkOnFire();
+        print((nextAction != null ? nextAction : 'MOVE')+' ${nextStep.x} ${nextStep.y}');
         stderr.writeln('end');
     }
 }
@@ -178,6 +220,45 @@ class BombsWatcher {
 
   bool isBomb(Point pos) {
     return _bombs.containsKey(pos);
+  }
+
+  /**
+   * Is point will be destroyed on next step.
+   */
+  List<Point> isOnFire(Point point) {
+      List<Point> sides = [];
+      for (var pos in _bombs.keys) {
+          var info = _bombs[pos];
+          if (info['countdown']>2)
+              continue;
+          var isKill = false;
+          for (var direction in directions) {
+              for (var i = 0; i < info['range']; i++) {
+                  var cell = new Point(pos.x+direction[0]*i, pos.y+direction[1]*i);
+                  if (_map.isOutOfMap(cell.x, cell.y))
+                      break;
+                  var type = _map.cellType(cell);
+                  // wall blocks fire
+                  if (type['wall'])
+                      break;
+                  if (cell == point) {
+                      stderr.writeln('bomb ${pos} will kill you at ${cell}');
+                      sides.add(new Point(cell.x-direction[0], cell.y-direction[1]));
+                      // fire can strike us from both sides
+                      if (info['range'] > i + 1) {
+                          sides.add(new Point(cell.x+direction[0], cell.y+direction[1]));
+                      }
+                      isKill = true;
+                      break;
+                  }
+              }
+              if (isKill)
+                  break;
+          };
+          if (sides.length>3)
+              break;
+      };
+      return sides;
   }
 
   List<Point> getAffectedBoxes() {
