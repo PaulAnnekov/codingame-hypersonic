@@ -7,6 +7,7 @@ int height;
 Map<int, Map> players = {};
 int range = 3;
 int countdown = 8;
+BombsWatcher bombsWatcher;
 
 void main() {
     List inputs;
@@ -25,7 +26,7 @@ void main() {
             map.add(a.split(''));
         }
         players.clear();
-        BombsWatcher bombsWatcher = new BombsWatcher();
+        bombsWatcher = new BombsWatcher();
         int entities = int.parse(stdin.readLineSync());
         for (int i = 0; i < entities; i++) {
             inputs = stdin.readLineSync().split(' ');
@@ -120,6 +121,10 @@ class BombsWatcher {
     return boxes;
   }
 
+  bool isBomb(Point pos) {
+    return _bombs.containsKey(pos);
+  }
+
   List<Point> getAffectedBoxes() {
     List<Point> boxes = [];
     _bombs.forEach((pos, info) {
@@ -204,10 +209,11 @@ bool isOutOfMap(int x, int y) {
 Map cellType(Point cell) {
     var val = map[cell.y][cell.x];
     return {
-        'obstacle': val != '.',
+        'obstacle': val != '.' || bombsWatcher.isBomb(cell),
         'box': int.parse(val, onError: (_) => null) != null,
         'free': val == '.',
-        'wall': val == 'X'
+        'wall': val == 'X',
+        'bomb': bombsWatcher.isBomb(cell)
     };
 }
 
