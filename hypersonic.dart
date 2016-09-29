@@ -124,6 +124,8 @@ class Game {
                 stderr.writeln('target ${target}');
                 stderr.writeln('toDestroy ${targetPos}');
                 stderr.writeln('nextStep ${nextStep}');
+            } else {
+              target = null;
             }
         } else {
             var path = aStar.path(myLocation, target);
