@@ -151,7 +151,11 @@ class Game {
                     return;
                 choices.add(choice);
             });
-            nextStep = choices[0];
+            if (choices.isEmpty) {
+              stderr.writeln('you are doomed');
+            } else {
+              nextStep = choices[0];
+            }
         } else {
             nextStep = myLocation;
         }
