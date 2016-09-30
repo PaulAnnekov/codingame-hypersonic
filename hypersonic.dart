@@ -3,8 +3,11 @@ import 'dart:math';
 
 int range = 3;
 int countdown = 8;
+/*List<Point> directions = [new Point(1, 0), new Point(0, 1),
+    new Point(-1, 0), new Point(0, -1)];*/
 
 void main() {
+    Logger.level = LogLevels.DEBUG;
     var game = new Game();
     game.start();
 }
@@ -18,7 +21,7 @@ class GameMap {
         map.clear();
         for (int i = 0; i < height; i++) {
             var a = stdin.readLineSync();
-            stderr.writeln(a);
+            Logger.info(a);
             map.add(a.split(''));
         }
     }
@@ -51,8 +54,12 @@ class Game {
     void start() {
         map = new GameMap();
         _readInput();
+        Stopwatch watch = new Stopwatch();
         while (true) {
+            watch.reset();
+            watch.start();
             _loop();
+            Logger.debug('loop ms: ${watch.elapsedMilliseconds}');
         }
     }
 
@@ -85,7 +92,7 @@ class Game {
 
     void _checkSettle() {
         if (target != null && myLocation==target && players[myId]['bombs']>0 && targetType['box']) {
-            stderr.writeln('BOMB!!!');
+            Logger.info('settled a BOMB');
             bombsWatcher.addBomb(target, {'owner': myId, 'countdown': countdown, 'range': players[myId]['range']});
             nextAction = 'BOMB';
             target = null;
@@ -97,14 +104,14 @@ class Game {
         var affectedBoxes = bombsWatcher.getAffectedBoxes();
         // if no target or target already destroyed or to be destroyed - find new target
         if (target == null || (!targetType['box'] || affectedBoxes.contains(targetPos))) {
-            stderr.writeln('searching');
+            Logger.debug('searching');
             var spiralProcessor = new SpiralProcessor(map, myLocation);
             var box, boxes = {};
             while ((box = spiralProcessor.getNext()) != null) {
-                stderr.writeln('box near ${box}');
+                Logger.debug('box near ${box}');
                 if (affectedBoxes.contains(box))
                 {
-                    stderr.writeln("it's marked as 'to destroy'");
+                    Logger.info("it's marked as 'to destroy'");
                     continue;
                 }
                 var path = aStar.path(myLocation, box);
@@ -115,25 +122,57 @@ class Game {
             // if not the last box where we settled a bomb and no more boxes.
             if (boxes.isNotEmpty) {
                 var distances = boxes.keys.toList();
-                stderr.writeln('distances ${distances}');
+                Logger.debug('distances ${distances}');
                 distances.sort();
                 box = boxes[distances[0]];
+                /*for (var i = 0; i < distances.length; i++) {
+                    var checkBox = boxes[distances[i]];
+                    var checkStep = checkBox['path'][checkBox['path'].length-2];
+                    if (_checkDeadLock(checkStep)) {
+                        distances.removeAt(0);
+                        box = null;
+                        nextStep = null;
+                    } else {
+
+                    }
+                }*/
                 target = box['path'][1];
                 targetPos = box['path'][0];
                 nextStep = box['path'][box['path'].length-2];
-                stderr.writeln('target ${target}');
-                stderr.writeln('toDestroy ${targetPos}');
-                stderr.writeln('nextStep ${nextStep}');
+                Logger.info('target ${target}');
+                Logger.info('toDestroy ${targetPos}');
+                Logger.info('nextStep ${nextStep}');
             } else {
               target = null;
             }
         } else {
             var path = aStar.path(myLocation, target);
-            stderr.writeln('next path ${path}');
+            Logger.info('next path ${path}');
             // we can stay near target and wait till free bombs
             nextStep = path.length > 1 ? path[path.length-2] : path[path.length-1];
         }
     }
+
+    /*bool _checkDeadLock(Point pos) {
+        var directionsClone = new List.from(directions);
+        while (true) {
+            var choices = 0;
+            var target;
+            for (var direction in directionsClone) {
+                var cell = pos + direction;
+                if (map.cellType(cell)['obstacle'] || bombsWatcher.isBomb(cell))
+                    continue;
+                pos = cell;
+                target = direction;
+                choices++;
+            }
+            if (choices > 1)
+                return false;
+            else if (choices == 0)
+                return true;
+            directionsClone.removeWhere((direction) => direction != target);
+        }
+    }*/
 
     void _checkOnFire() {
         var fireSides = bombsWatcher.isOnFire(nextStep);
@@ -154,7 +193,7 @@ class Game {
                 choices.add(choice);
             });
             if (choices.isEmpty) {
-              stderr.writeln('you are doomed');
+                Logger.info('you are doomed');
             } else {
               nextStep = choices[0];
             }
@@ -175,11 +214,11 @@ class Game {
     }
 
     void _loop() {
-        stderr.writeln('loop');
+        Logger.info('loop');
         map.updateFromInput();
         _readEntities();
         myLocation = players[myId]['pos']/*new Point(5,0)*/;
-        stderr.writeln('before algo');
+        Logger.debug('before algo');
         targetType = targetPos != null ? map.cellType(targetPos) : null;
         nextAction = null;
         _checkSettle();
@@ -187,7 +226,7 @@ class Game {
         _checkEnemy();
         _checkOnFire();
         print((nextAction != null ? nextAction : 'MOVE')+' ${nextStep.x} ${nextStep.y}');
-        stderr.writeln('end');
+        Logger.debug('end');
     }
 }
 
@@ -214,7 +253,7 @@ class BombsWatcher {
         if (type['wall'])
           break;
         if (type['box']) {
-          stderr.writeln('to destroy cell ${cell} from ${pos} by dir ${direction}');
+            Logger.debug('to destroy cell ${cell} from ${pos} by dir ${direction}');
           boxes.add(cell);
           break;
         }
@@ -248,7 +287,7 @@ class BombsWatcher {
                   if (type['wall'])
                       break;
                   if (cell == point) {
-                      stderr.writeln('bomb ${pos} will kill you at ${cell}');
+                      Logger.debug('bomb ${pos} will kill you at ${cell}');
                       sides.add(new Point(cell.x-direction[0], cell.y-direction[1]));
                       // fire can strike us from both sides
                       if (info['range'] > i + 1) {
@@ -353,9 +392,9 @@ class AStar {
     AStar(this._map, this.bombsWatcher);
 
     List<Point> path(Point from, Point to) {
-        stderr.writeln('searching path');
-        stderr.writeln(from);
-        stderr.writeln(to);
+        Logger.debug('searching path');
+        Logger.debug(from);
+        Logger.debug(to);
         // game does not support diagonal moves
         var neighborX = [1, 0, -1, 0];
         var neighborY = [0, 1, 0, -1];
@@ -406,3 +445,23 @@ class AStar {
         return totalPath;
     }
 }
+
+class Logger {
+    static LogLevels level = LogLevels.DISABLE;
+
+    static void debug(message) {
+        _log(LogLevels.DEBUG, message);
+    }
+
+    static void info(message) {
+        _log(LogLevels.INFO, message);
+    }
+
+    static void _log(LogLevels _level, message) {
+        if (_level.index >= level.index) {
+            stderr.writeln(message);
+        }
+    }
+}
+
+enum LogLevels {DEBUG, INFO, DISABLE}
