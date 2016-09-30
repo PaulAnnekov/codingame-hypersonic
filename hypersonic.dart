@@ -63,6 +63,7 @@ class Game {
     Point nextStep;
     AStar aStar;
     ComplexCheck complexChecker;
+    int lastEnemyBomb = 0;
 
     void start() {
         map = new GameMap();
@@ -112,6 +113,7 @@ class Game {
                 'countdown': countdown,
                 'range': players[myId]['range']
             });
+            players[myId]['bombs']--;
             nextAction = 'BOMB';
             target = null;
         }
@@ -120,88 +122,89 @@ class Game {
     void _checkTarget() {
         var affectedBoxes = bombsWatcher.getAffectedBoxes();
         // if no target or target already destroyed or to be destroyed - find new target
-        if (target == null ||
-            (!targetType['box'] || affectedBoxes.contains(targetPos))) {
-            Logger.debug('searching');
-            var spiralProcessor = new SpiralProcessor(map, myLocation);
-            var box, boxes = {};
-            while ((box = spiralProcessor.getNext()) != null) {
-                Logger.debug('box near ${box}');
-                if (affectedBoxes.contains(box)) {
-                    Logger.info("it's marked as 'to destroy'");
-                    continue;
-                }
-                var path = aStar.path(myLocation, box);
-                if (path == null)
-                    continue;
-                boxes[path.length] = {'path': path};
+        Logger.debug('searching');
+        var spiralProcessor = new SpiralProcessor(map, myLocation);
+        var box, boxes = {};
+        while ((box = spiralProcessor.getNext()) != null) {
+            Logger.debug('box near ${box}');
+            if (affectedBoxes.contains(box)) {
+                Logger.info("it's marked as 'to destroy'");
+                continue;
             }
-            var targetBox;
-            // if not the last box where we settled a bomb and no more boxes.
-            if (boxes.isNotEmpty) {
-                var distances = boxes.keys.toList();
-                Logger.debug('distances ${distances}');
-                distances.sort();
-                targetBox = boxes[distances[0]];
-                for (var i = 0; i < distances.length; i++) {
-                    var checkBox = boxes[distances[i]];
-                    var checkStep = checkBox['path'][checkBox['path'].length-2];
+            var path = aStar.path(myLocation, box);
+            if (path == null)
+                continue;
+            boxes[path.length] = {'path': path};
+        }
+        var targetBox;
+        // if not the last box where we settled a bomb and no more boxes.
+        if (boxes.isNotEmpty) {
+            var distances = boxes.keys.toList();
+            Logger.debug('boxes ${boxes}, distances ${distances}');
+            distances.sort();
+            targetBox = boxes[distances[0]];
+            for (var i = 0; i < distances.length; i++) {
+                var checkBox = boxes[distances[i]];
+                var checkStep = checkBox['path'][checkBox['path'].length-2];
+                if (bombsWatcher.isBomb(myLocation) && _checkDeadLock(checkStep)) {
                     Logger.debug('_checkDeadLock ${checkStep}');
-                    if (nextAction == 'BOMB' && _checkDeadLock(checkStep)) {
-                        distances.removeAt(0);
-                        targetBox = null;
-                        nextStep = null;
-                    } else {
-                        targetBox = checkBox;
-                        break;
-                    }
+                    Logger.debug('locked');
+                    distances.removeAt(0);
+                    targetBox = null;
+                    nextStep = null;
+                } else {
+                    targetBox = checkBox;
+                    break;
                 }
             }
-            if (targetBox != null) {
-                target = targetBox['path'][1];
-                targetPos = targetBox['path'][0];
-                nextStep = targetBox['path'][targetBox['path'].length - 2];
-                Logger.info('target ${target}');
-                Logger.info('toDestroy ${targetPos}');
-                Logger.info('nextStep ${nextStep}');
-            } else {
-                target = null;
-            }
+        }
+        if (targetBox != null) {
+            target = targetBox['path'][1];
+            targetPos = targetBox['path'][0];
+            // path <= 2 means we are right near target
+            nextStep = targetBox['path'].length > 2 ? targetBox['path'][targetBox['path'].length - 2] : myLocation;
+            Logger.info('target ${target}');
+            Logger.info('toDestroy ${targetPos}');
+            Logger.info('nextStep ${nextStep}');
         } else {
-            var path = aStar.path(myLocation, target);
-            Logger.info('next path ${path}');
-            // we can stay near target and wait till free bombs
-            nextStep = path.length > 1 ? path[path.length - 2] : path[path.length - 1];
+            target = null;
         }
     }
 
     bool _checkDeadLock(Point pos) {
         List<Point> directionsClone = new List.from(directions);
         var target;
-        while (true) {
+        for (var direction in directions) {
+            // don't check back direction
+            if (pos + direction == myLocation) {
+                directionsClone.remove(direction);
+                target = new Point(direction.x * -1, direction.y * -1);
+                directionsClone.remove(target);
+                break;
+            }
+        }
+        if (directionsClone.length > 2)
+            throw new Exception('Only 2 directions must exist ${pos}, ${myLocation}');
+        Logger.debug('directions: ${directionsClone}');
+        while (!complexChecker.isObstacle(pos)) {
             var choices = 0, cell;
             for (var direction in directionsClone) {
                 cell = pos + direction;
                 if (complexChecker.isObstacle(cell))
                     continue;
-                Logger.debug('free ${direction}');
-                target ??= direction;
+                Logger.debug('free: ${cell}');
                 choices++;
             }
-            Logger.debug('choices: ${choices}, target ${target}');
-            if (choices > 1)
+            if (choices > 0)
                 return false;
-            else if (choices == 0)
-                return true;
             pos += target;
-            Logger.debug('next pos: ${pos}');
-            // don't check back direction
-            directionsClone.remove(new Point(target.x * -1, target.y * -1));
-            Logger.debug('directions: ${directionsClone}');
+            Logger.debug('new pos: ${pos}');
         }
+        return true;
     }
 
     void _checkOnFire() {
+        Logger.debug('_checkOnFire ${nextStep}');
         var fireSides = bombsWatcher.isOnFire(nextStep);
         if (fireSides.isEmpty)
             return;
@@ -232,14 +235,21 @@ class Game {
 
     void _checkEnemy() {
         if (target != null)
+        {
+            lastEnemyBomb = 0;
             return;
+        }
+        lastEnemyBomb--;
         var haveBombs = players[myId]['bombs'] > 0;
         Map tmp = new Map.from(players);
         tmp.remove(myId);
         var path = aStar.path(myLocation, tmp[tmp.keys.first]['pos']);
-        nextStep = path != null && path.length > 1 ? path[1] : myLocation;
-        if (haveBombs)
+        nextStep = path != null && path.length > 1 ? path[path.length-2] : myLocation;
+        if (haveBombs && lastEnemyBomb <= 0 && path != null && path.length <= 3)
+        {
             nextAction = 'BOMB';
+            lastEnemyBomb = 3;
+        }
     }
 
     void _loop() {
@@ -433,9 +443,7 @@ class AStar {
      * Returns path list from [from] to [to].
      */
     List<Point> path(Point from, Point to) {
-        Logger.debug('searching path');
-        Logger.debug(from);
-        Logger.debug(to);
+        //Logger.debug('searching path ${from} ${to}');
         // game does not support diagonal moves
         var neighborX = [1, 0, -1, 0];
         var neighborY = [0, 1, 0, -1];
@@ -474,6 +482,7 @@ class AStar {
                 fScore[neighbor] = gScore[neighbor] + neighbor.distanceTo(to);
             }
         }
+        //Logger.debug('not found');
         return null;
     }
 
