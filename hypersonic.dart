@@ -3,8 +3,8 @@ import 'dart:math';
 
 int range = 3;
 int countdown = 8;
-/*List<Point> directions = [new Point(1, 0), new Point(0, 1),
-    new Point(-1, 0), new Point(0, -1)];*/
+List<Point> directions = [new Point(1, 0), new Point(0, 1),
+    new Point(-1, 0), new Point(0, -1)];
 
 void main() {
     Logger.level = LogLevels.DEBUG;
@@ -41,6 +41,17 @@ class GameMap {
     }
 }
 
+class ComplexCheck {
+    GameMap _map;
+    BombsWatcher _bombsWatcher;
+
+    ComplexCheck(this._map, this._bombsWatcher);
+
+    bool isObstacle(Point cell) {
+        return _map.isOutOfMap(cell.x, cell.y) || _map.cellType(cell)['obstacle'] || _bombsWatcher.isBomb(cell);
+    }
+}
+
 class Game {
     Map<int, Map> players = {};
     int myId;
@@ -51,6 +62,7 @@ class Game {
     String nextAction;
     Point nextStep;
     AStar aStar;
+    ComplexCheck complexChecker;
 
     void start() {
         map = new GameMap();
@@ -112,8 +124,7 @@ class Game {
             (!targetType['box'] || affectedBoxes.contains(targetPos))) {
             Logger.debug('searching');
             var spiralProcessor = new SpiralProcessor(map, myLocation);
-            var box,
-                boxes = {};
+            var box, boxes = {};
             while ((box = spiralProcessor.getNext()) != null) {
                 Logger.debug('box near ${box}');
                 if (affectedBoxes.contains(box)) {
@@ -125,26 +136,31 @@ class Game {
                     continue;
                 boxes[path.length] = {'path': path};
             }
+            var targetBox;
             // if not the last box where we settled a bomb and no more boxes.
             if (boxes.isNotEmpty) {
                 var distances = boxes.keys.toList();
                 Logger.debug('distances ${distances}');
                 distances.sort();
-                box = boxes[distances[0]];
-                /*for (var i = 0; i < distances.length; i++) {
+                targetBox = boxes[distances[0]];
+                for (var i = 0; i < distances.length; i++) {
                     var checkBox = boxes[distances[i]];
                     var checkStep = checkBox['path'][checkBox['path'].length-2];
-                    if (_checkDeadLock(checkStep)) {
+                    Logger.debug('_checkDeadLock ${checkStep}');
+                    if (nextAction == 'BOMB' && _checkDeadLock(checkStep)) {
                         distances.removeAt(0);
-                        box = null;
+                        targetBox = null;
                         nextStep = null;
                     } else {
-
+                        targetBox = checkBox;
+                        break;
                     }
-                }*/
-                target = box['path'][1];
-                targetPos = box['path'][0];
-                nextStep = box['path'][box['path'].length - 2];
+                }
+            }
+            if (targetBox != null) {
+                target = targetBox['path'][1];
+                targetPos = targetBox['path'][0];
+                nextStep = targetBox['path'][targetBox['path'].length - 2];
                 Logger.info('target ${target}');
                 Logger.info('toDestroy ${targetPos}');
                 Logger.info('nextStep ${nextStep}');
@@ -155,31 +171,35 @@ class Game {
             var path = aStar.path(myLocation, target);
             Logger.info('next path ${path}');
             // we can stay near target and wait till free bombs
-            nextStep =
-            path.length > 1 ? path[path.length - 2] : path[path.length - 1];
+            nextStep = path.length > 1 ? path[path.length - 2] : path[path.length - 1];
         }
     }
 
-    /*bool _checkDeadLock(Point pos) {
-        var directionsClone = new List.from(directions);
+    bool _checkDeadLock(Point pos) {
+        List<Point> directionsClone = new List.from(directions);
+        var target;
         while (true) {
-            var choices = 0;
-            var target;
+            var choices = 0, cell;
             for (var direction in directionsClone) {
-                var cell = pos + direction;
-                if (map.cellType(cell)['obstacle'] || bombsWatcher.isBomb(cell))
+                cell = pos + direction;
+                if (complexChecker.isObstacle(cell))
                     continue;
-                pos = cell;
-                target = direction;
+                Logger.debug('free ${direction}');
+                target ??= direction;
                 choices++;
             }
+            Logger.debug('choices: ${choices}, target ${target}');
             if (choices > 1)
                 return false;
             else if (choices == 0)
                 return true;
-            directionsClone.removeWhere((direction) => direction != target);
+            pos += target;
+            Logger.debug('next pos: ${pos}');
+            // don't check back direction
+            directionsClone.remove(new Point(target.x * -1, target.y * -1));
+            Logger.debug('directions: ${directionsClone}');
         }
-    }*/
+    }
 
     void _checkOnFire() {
         var fireSides = bombsWatcher.isOnFire(nextStep);
@@ -217,7 +237,7 @@ class Game {
         Map tmp = new Map.from(players);
         tmp.remove(myId);
         var path = aStar.path(myLocation, tmp[tmp.keys.first]['pos']);
-        nextStep = path != null ? path[1] : myLocation;
+        nextStep = path != null && path.length > 1 ? path[1] : myLocation;
         if (haveBombs)
             nextAction = 'BOMB';
     }
@@ -226,6 +246,7 @@ class Game {
         Logger.info('loop');
         map.updateFromInput();
         _readEntities();
+        complexChecker = new ComplexCheck(map, bombsWatcher);
         aStar = new AStar(map, bombsWatcher);
         myLocation = players[myId]['pos'] /*new Point(5,0)*/;
         Logger.debug('before algo');
