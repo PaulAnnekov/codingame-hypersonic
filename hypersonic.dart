@@ -143,13 +143,13 @@ class Game {
             Logger.debug('boxes ${boxes}, distances ${distances}');
             distances.sort();
             targetBox = boxes[distances[0]];
-            for (var i = 0; i < distances.length; i++) {
-                var checkBox = boxes[distances[i]];
+            while (distances.isNotEmpty) {
+                var checkBox = boxes[distances.first];
                 var checkStep = checkBox['path'][checkBox['path'].length-2];
+                Logger.debug('_checkDeadLock ${checkStep}');
                 if (bombsWatcher.isBomb(myLocation) && _checkDeadLock(checkStep)) {
-                    Logger.debug('_checkDeadLock ${checkStep}');
-                    Logger.debug('locked');
                     distances.removeAt(0);
+                    Logger.debug('locked ${distances}');
                     targetBox = null;
                     nextStep = null;
                 } else {
