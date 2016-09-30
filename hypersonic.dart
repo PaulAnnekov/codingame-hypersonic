@@ -50,6 +50,7 @@ class Game {
     Map targetType;
     String nextAction;
     Point nextStep;
+    AStar aStar;
 
     void start() {
         map = new GameMap();
@@ -105,7 +106,6 @@ class Game {
     }
 
     void _checkTarget() {
-        var aStar = new AStar(map, bombsWatcher);
         var affectedBoxes = bombsWatcher.getAffectedBoxes();
         // if no target or target already destroyed or to be destroyed - find new target
         if (target == null ||
@@ -216,7 +216,8 @@ class Game {
         var haveBombs = players[myId]['bombs'] > 0;
         Map tmp = new Map.from(players);
         tmp.remove(myId);
-        nextStep = tmp[tmp.keys.first]['pos'];
+        var path = aStar.path(myLocation, tmp[tmp.keys.first]['pos']);
+        nextStep = path != null ? path[1] : myLocation;
         if (haveBombs)
             nextAction = 'BOMB';
     }
@@ -225,6 +226,7 @@ class Game {
         Logger.info('loop');
         map.updateFromInput();
         _readEntities();
+        aStar = new AStar(map, bombsWatcher);
         myLocation = players[myId]['pos'] /*new Point(5,0)*/;
         Logger.debug('before algo');
         targetType = targetPos != null ? map.cellType(targetPos) : null;
@@ -406,6 +408,9 @@ class AStar {
 
     AStar(this._map, this.bombsWatcher);
 
+    /**
+     * Returns path list from [from] to [to].
+     */
     List<Point> path(Point from, Point to) {
         Logger.debug('searching path');
         Logger.debug(from);
@@ -434,8 +439,7 @@ class AStar {
                     continue;
                 var type = _map.cellType(neighbor);
                 // boxes are obstacles, but only when it's not target box
-                if (neighbor != to &&
-                    (type['obstacle'] || bombsWatcher.isBomb(neighbor)))
+                if (neighbor != to && (type['obstacle'] || bombsWatcher.isBomb(neighbor)))
                     continue;
                 if (closedSet.contains(neighbor))
                     continue;
