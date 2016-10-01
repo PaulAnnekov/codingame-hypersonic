@@ -113,6 +113,7 @@ class Game {
 
     void _readInput() {
         List inputs = stdin.readLineSync().split(' ');
+        Logger.info(inputs.join(' '));
         map.width = int.parse(inputs[0]);
         map.height = int.parse(inputs[1]);
         myId = int.parse(inputs[2]);
@@ -122,8 +123,10 @@ class Game {
         players.clear();
         bombsWatcher = new BombsWatcher(map);
         int entities = int.parse(stdin.readLineSync());
+        Logger.info(entities);
         for (int i = 0; i < entities; i++) {
             List inputs = stdin.readLineSync().split(' ');
+            Logger.info(inputs.join(' '));
             int entityType = int.parse(inputs[0]);
             int owner = int.parse(inputs[1]);
             Point pos = new Point(int.parse(inputs[2]), int.parse(inputs[3]));
@@ -216,6 +219,7 @@ class Game {
             if (path == null)
                 continue;
             var stepsToFreeBomb = bombsWatcher.stepsToFreeBomb(myId, maxBombs);
+            Logger.debug('is dead ${path} ${stepsToFreeBomb} ${maxBombs}');
             if (stepsToFreeBomb > 0 && bombsWatcher.isDeadPos(path[1], stepsToFreeBomb-path.length-1, stepsToFreeBomb)) {
                 Logger.info('we will die if wait at ${path[1]}');
                 continue;
@@ -392,6 +396,7 @@ class BombsWatcher {
         // we check bomb position because it can be on bonus
         if (bonuses.containsKey(pos))
             affected['bonuses'].add(pos);
+        affected['cells'].add(pos);
         directions.forEach((direction) {
             for (var i = 1; i < info['range']; i++) {
                 var cell = new Point(
@@ -422,8 +427,11 @@ class BombsWatcher {
         return affected;
     }
 
-    bool isBomb(Point pos) {
-        return _bombsPerStep[0].containsKey(pos);
+    bool isBomb(Point pos, [int step = 0]) {
+        for (var i = 1; i <= step; i++) {
+            _calcStep(i);
+        }
+        return _bombsPerStep[step].containsKey(pos);
     }
 
     bool isBonusBombNextStep(Point pos) {
@@ -622,6 +630,7 @@ class AStar {
      * Returns path list from [from] to [to].
      */
     List<Point> path(Point from, Point to) {
+        var map = _map;
         Logger.debug('searching path ${from} ${to}');
         // game does not support diagonal moves
         var neighborX = [1, 0, -1, 0];
@@ -643,18 +652,20 @@ class AStar {
                 var x = current.x + neighborX[i];
                 var y = current.y + neighborY[i];
                 var neighbor = new Point(x, y);
-                if (_map.isOutOfMap(x, y))
-                    continue;
-                var type = _map.cellType(neighbor);
-                // boxes are obstacles, but only when it's not target box
-                if (neighbor != to && (type['obstacle'] || bombsWatcher.isBomb(neighbor)))
+                if (map.isOutOfMap(x, y))
                     continue;
                 if (closedSet.contains(neighbor))
                     continue;
                 var cameFromTmp = new Map.from(cameFrom);
                 cameFromTmp[neighbor] = current;
                 var path = _getPath(cameFromTmp, neighbor);
-                if (bombsWatcher.isDeadPos(neighbor, path.length, path.length))
+                var step = path.length;
+                map = bombsWatcher.mapAtStep(step+1);
+                var type = map.cellType(neighbor);
+                // boxes are obstacles, but only when it's not target box
+                if (neighbor != to && (type['obstacle'] || bombsWatcher.isBomb(neighbor, step)))
+                    continue;
+                if (bombsWatcher.isDeadPos(neighbor, step, step))
                     continue;
                 var tentativeGScore = gScore[current] + 1;
                 if (!openSet.contains(neighbor))
