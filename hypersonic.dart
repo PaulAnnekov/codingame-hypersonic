@@ -12,6 +12,14 @@ void main() {
     game.start();
 }
 
+Map<dynamic, Map> cloneMapOfMaps(Map<dynamic, Map> from) {
+    var newMap = {};
+    for (var key in from.keys) {
+        newMap[key] = new Map.from(from[key]);
+    }
+    return newMap;
+}
+
 class GameMap {
     List<List<String>> map = [];
     int width;
@@ -39,6 +47,31 @@ class GameMap {
             'wall': val == 'X'
         };
     }
+
+    GameMap clone() {
+        var newMap = new GameMap();
+        newMap.map = [];
+        map.forEach((row) {
+            newMap.map.add(new List.from(row));
+        });
+        newMap.width = width;
+        newMap.height = height;
+        return newMap;
+    }
+
+    String toString() {
+        String out = '    ';
+        for (var i = 0; i < width; i++)
+            out += i.toString().padRight(2) + ' ';
+        out += '\n\n';
+        var i = 0;
+        map.forEach((line) {
+            out += i.toString().padRight(2) + '  ' + line.join('  ');
+            out += '\n';
+            i++;
+        });
+        return out;
+    }
 }
 
 class ComplexCheck {
@@ -55,15 +88,16 @@ class ComplexCheck {
 class Game {
     Map<int, Map> players = {};
     int myId;
-    Point target, targetPos, myLocation;
+    Point target = new Point(6, 10), targetPos = new Point(7, 10), myLocation;
     GameMap map;
     BombsWatcher bombsWatcher;
-    Map targetType;
+    Map targetType = {'box': true};
     String nextAction;
     Point nextStep;
     AStar aStar;
     ComplexCheck complexChecker;
     int lastEnemyBomb = 0;
+    int maxBombs = 1;
 
     void start() {
         map = new GameMap();
@@ -100,6 +134,8 @@ class Game {
             } else if (entityType == 1) {
                 bombsWatcher.addBomb(pos, {'owner': owner, 'countdown': param1,
                     'range': param2});
+            } else if (entityType == 2) {
+                bombsWatcher.addBonus(pos, param1);
             }
         }
     }
@@ -134,6 +170,11 @@ class Game {
             var path = aStar.path(myLocation, box);
             if (path == null)
                 continue;
+            var stepsToFreeBomb = bombsWatcher.stepsToFreeBomb(myId, maxBombs);
+            if (bombsWatcher.isDeadPos(path[1], stepsToFreeBomb-path.length-1, stepsToFreeBomb)) {
+                Logger.info('we will die if wait at ${path[1]}');
+                continue;
+            }
             boxes[path.length] = {'path': path};
         }
         var targetBox;
@@ -143,20 +184,6 @@ class Game {
             Logger.debug('boxes ${boxes}, distances ${distances}');
             distances.sort();
             targetBox = boxes[distances[0]];
-            while (distances.isNotEmpty) {
-                var checkBox = boxes[distances.first];
-                var checkStep = checkBox['path'][checkBox['path'].length-2];
-                Logger.debug('_checkDeadLock ${checkStep}');
-                if (bombsWatcher.isBomb(myLocation) && _checkDeadLock(checkStep)) {
-                    distances.removeAt(0);
-                    Logger.debug('locked ${distances}');
-                    targetBox = null;
-                    nextStep = null;
-                } else {
-                    targetBox = checkBox;
-                    break;
-                }
-            }
         }
         if (targetBox != null) {
             target = targetBox['path'][1];
@@ -167,40 +194,9 @@ class Game {
             Logger.info('toDestroy ${targetPos}');
             Logger.info('nextStep ${nextStep}');
         } else {
+            nextAction = 'MOVE';
             target = null;
         }
-    }
-
-    bool _checkDeadLock(Point pos) {
-        List<Point> directionsClone = new List.from(directions);
-        var target;
-        for (var direction in directions) {
-            // don't check back direction
-            if (pos + direction == myLocation) {
-                directionsClone.remove(direction);
-                target = new Point(direction.x * -1, direction.y * -1);
-                directionsClone.remove(target);
-                break;
-            }
-        }
-        if (directionsClone.length > 2)
-            throw new Exception('Only 2 directions must exist ${pos}, ${myLocation}');
-        Logger.debug('directions: ${directionsClone}');
-        while (!complexChecker.isObstacle(pos)) {
-            var choices = 0, cell;
-            for (var direction in directionsClone) {
-                cell = pos + direction;
-                if (complexChecker.isObstacle(cell))
-                    continue;
-                Logger.debug('free: ${cell}');
-                choices++;
-            }
-            if (choices > 0)
-                return false;
-            pos += target;
-            Logger.debug('new pos: ${pos}');
-        }
-        return true;
     }
 
     void _checkOnFire() {
@@ -258,7 +254,7 @@ class Game {
         _readEntities();
         complexChecker = new ComplexCheck(map, bombsWatcher);
         aStar = new AStar(map, bombsWatcher);
-        myLocation = players[myId]['pos'] /*new Point(5,0)*/;
+        myLocation = players[myId]['pos'];
         Logger.debug('before algo');
         targetType = targetPos != null ? map.cellType(targetPos) : null;
         nextAction = null;
@@ -266,6 +262,8 @@ class Game {
         _checkTarget();
         _checkEnemy();
         _checkOnFire();
+        if (bombsWatcher.isBonusBombNextStep(nextStep))
+            maxBombs++;
         print((nextAction != null ? nextAction : 'MOVE') +
             ' ${nextStep.x} ${nextStep.y}');
         Logger.debug('end');
@@ -273,43 +271,137 @@ class Game {
 }
 
 class BombsWatcher {
-    Map<Point, Map> _bombs = {};
-    static final List<List<int>> directions = [[1, 0], [0, 1], [-1, 0], [0, -1]
-    ];
-    GameMap _map;
+    static final List<List<int>> directions = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    Map<int, GameMap> _mapPerStep = {};
+    Map<int, Map<Point, Map>> _bombsPerStep = {};
+    Map<int, Map<Point, int>> _bonusesPerStep = {};
+    Map<int, List<Point>> _fireCellsPerStep = {};
 
-    BombsWatcher(this._map);
+    BombsWatcher(GameMap map) {
 
-    void addBomb(Point pos, Map info) {
-        _bombs[pos] = info;
+        _bombsPerStep[0] = {};
+        _bonusesPerStep[0] = {};
+        _mapPerStep[0] = map;
     }
 
-    List<Point> _getAffectedBoxes(Point pos, Map info) {
-        List<Point> boxes = [];
+    void addBomb(Point pos, Map info) {
+        _bombsPerStep[0][pos] = info;
+    }
+
+    void addBonus(Point pos, int type) {
+        _bonusesPerStep[0][pos] = type;
+    }
+
+    Map<String, List<Point>> _getAffected(Point pos, Map info, int step, {Point custom}) {
+        var map = _mapPerStep[step];
+        var bombs = _bombsPerStep[step];
+        var bonuses = _bonusesPerStep[step];
+        Map<String, List<Point>> affected = {'boxes': [], 'bombs': [], 'bonuses': [], 'cells': []};
+        // we check bomb position because it can be on bonus
+        if (bonuses.containsKey(pos))
+            affected['bonuses'].add(pos);
         directions.forEach((direction) {
             for (var i = 1; i < info['range']; i++) {
                 var cell = new Point(
                     pos.x + direction[0] * i, pos.y + direction[1] * i);
-                if (_map.isOutOfMap(cell.x, cell.y))
+                if (map.isOutOfMap(cell.x, cell.y))
                     break;
-                var type = _map.cellType(cell);
+                var type = map.cellType(cell);
                 // wall blocks fire
                 if (type['wall'])
                     break;
+                // TODO: use Set type?
+                affected['cells'].add(cell);
                 if (type['box']) {
-                    Logger.debug(
-                        'to destroy cell ${cell} from ${pos} by dir ${direction}');
-                    boxes.add(cell);
+                    affected['boxes'].add(cell);
+                    break;
+                }
+                if (bombs.containsKey(cell)) {
+                    affected['bombs'].add(cell);
+                    break;
+                }
+                if (bonuses.containsKey(cell)) {
+                    affected['bonuses'].add(cell);
                     break;
                 }
             }
         });
 
-        return boxes;
+        return affected;
     }
 
     bool isBomb(Point pos) {
-        return _bombs.containsKey(pos);
+        return _bombsPerStep[0].containsKey(pos);
+    }
+
+    bool isBonusBombNextStep(Point pos) {
+        // we check next step, because bonus can be destroyed before we step on it
+        return _bonusesPerStep[1].containsKey(pos);
+    }
+
+    int stepsToFreeBomb(int owner, int maxBombs) {
+        var step = 0, bombs;
+        do {
+            bombs = _bombsPerStep[step].values.where((bomb) => bomb['owner'] == owner).length;
+            step++;
+            _calcStep(step);
+        } while (bombs >= maxBombs);
+        return step;
+    }
+
+    bool isDeadPos(Point pos, int stepFrom, int stepTo) {
+        for (var i = 1; i <= stepTo; i++) {
+            _calcStep(i);
+            if (i >= stepFrom && _fireCellsPerStep[i].contains(pos)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void _calcStep(int step) {
+        if (_mapPerStep[step] != null)
+            return;
+        var prevMap = _mapPerStep[step-1].clone();
+        var prevBombs = cloneMapOfMaps(_bombsPerStep[step-1]);
+        var prevBonuses = new Map.from(_bonusesPerStep[step-1]);
+        var fireCells = [];
+        var queue = prevBombs.keys.toList();
+        _mapPerStep[step] = prevMap;
+        _bombsPerStep[step] = prevBombs;
+        _bonusesPerStep[step] = prevBonuses;
+        _fireCellsPerStep[step] = fireCells;
+        while (queue.isNotEmpty) {
+            var bombPos = queue.first;
+            var bomb = prevBombs[queue.first];
+            bomb['countdown']--;
+            if (bomb['countdown'] == 0) {
+                var affected = _getAffected(bombPos, bomb, step);
+                affected['boxes'].forEach((pos) {
+                    var box = int.parse(prevMap.map[pos.y][pos.x]);
+                    if (box > 0)
+                        prevBonuses[pos] = box;
+                    prevMap.map[pos.y][pos.x] = '.';
+                });
+                affected['bombs'].forEach((pos) {
+                    var affectedBomb = prevBombs[pos];
+                    affectedBomb['countdown'] = 1;
+                    if (!queue.contains(pos))
+                        queue.add(pos);
+                });
+                affected['bonuses'].forEach((pos) {
+                    prevBonuses.remove(pos);
+                });
+                fireCells.addAll(affected['cells']);
+                prevMap.map[bombPos.y][bombPos.x] = '.';
+                prevBombs.remove(bombPos);
+            }
+            queue.removeAt(0);
+        }
+        /*Logger.debug('step: ${step}');
+        Logger.debug(prevMap);
+        Logger.debug(prevBombs);
+        Logger.debug(prevBonuses);*/
     }
 
     /**
@@ -317,8 +409,8 @@ class BombsWatcher {
      */
     List<Point> isOnFire(Point point) {
         List<Point> sides = [];
-        for (var pos in _bombs.keys) {
-            var info = _bombs[pos];
+        for (var pos in _bombsPerStep[0].keys) {
+            var info = _bombsPerStep[0][pos];
             if (info['countdown'] > 2)
                 continue;
             var isKill = false;
@@ -326,9 +418,9 @@ class BombsWatcher {
                 for (var i = 0; i < info['range']; i++) {
                     var cell = new Point(
                         pos.x + direction[0] * i, pos.y + direction[1] * i);
-                    if (_map.isOutOfMap(cell.x, cell.y))
+                    if (_mapPerStep[0].isOutOfMap(cell.x, cell.y))
                         break;
-                    var type = _map.cellType(cell);
+                    var type = _mapPerStep[0].cellType(cell);
                     // wall blocks fire
                     if (type['wall'])
                         break;
@@ -356,30 +448,12 @@ class BombsWatcher {
 
     List<Point> getAffectedBoxes() {
         List<Point> boxes = [];
-        _bombs.forEach((pos, info) {
-            boxes.addAll(_getAffectedBoxes(pos, info));
+        _bombsPerStep[0].forEach((pos, info) {
+            boxes.addAll(_getAffected(pos, info, 0)['boxes']);
         });
         return boxes;
     }
 }
-
-/*List<int> getPositionBetween(List<int> point1, List<int> point2) {
-    return [(point1[0]-point2[0]).abs().toInt(),
-        (point1[1]-point2[1]).abs().toInt()];
-}
-
-List<List<int>> getBoxesNear(List<int> point, int range) {
-    List<List<int>> directions = [[0, 1], [1, 0], [0, -1], [-1, 0]];
-    List<List<int>> boxes = [];
-    for (var i = 1; i <= range; i++) {
-        directions.forEach((direction) {
-            if (!cellType(new Point(map[direction[0] * range], [direction[1] * range]))['box'])
-                return;
-            boxes.add([direction[0] * range, direction[1] * range]);
-        });
-    }
-    return boxes;
-}*/
 
 class SpiralProcessor {
     Point _current;
@@ -443,7 +517,7 @@ class AStar {
      * Returns path list from [from] to [to].
      */
     List<Point> path(Point from, Point to) {
-        //Logger.debug('searching path ${from} ${to}');
+        Logger.debug('searching path ${from} ${to}');
         // game does not support diagonal moves
         var neighborX = [1, 0, -1, 0];
         var neighborY = [0, 1, 0, -1];
@@ -472,6 +546,15 @@ class AStar {
                     continue;
                 if (closedSet.contains(neighbor))
                     continue;
+                var cameFromTmp = new Map.from(cameFrom);
+                cameFromTmp[neighbor] = current;
+                var path = _getPath(cameFromTmp, neighbor);
+                if (neighbor==new Point(6, 10)) {
+                    Logger.debug('ta-da ${path}');
+                    Logger.debug('ta-da ${bombsWatcher._fireCellsPerStep[path.length]}');
+                }
+                if (bombsWatcher.isDeadPos(neighbor, path.length, path.length))
+                    continue;
                 var tentativeGScore = gScore[current] + 1;
                 if (!openSet.contains(neighbor))
                     openSet.add(neighbor);
@@ -482,7 +565,7 @@ class AStar {
                 fScore[neighbor] = gScore[neighbor] + neighbor.distanceTo(to);
             }
         }
-        //Logger.debug('not found');
+        Logger.debug('not found');
         return null;
     }
 
