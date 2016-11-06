@@ -88,7 +88,7 @@ class ComplexCheck {
 class Game {
     Map<int, Map> players = {};
     int myId;
-    Point target, targetPos, myLocation;
+    Point target, targetPos/* = new Point(9, 0)*/, myLocation;
     GameMap map;
     BombsWatcher bombsWatcher;
     Map targetType = {'box': true};
@@ -539,6 +539,9 @@ class BombsWatcher {
                         isKill = true;
                         break;
                     }
+                    // fire doesn't go behind the box. stop checking behind
+                    if (type['box'])
+                        break;
                 }
                 if (isKill)
                     break;
