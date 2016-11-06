@@ -59,6 +59,18 @@ class GameMap {
         return newMap;
     }
 
+    List<Point> getBoxes() {
+        var boxes = [];
+        for (int x = 0; x < width; x++) {
+            for (int y = 0; y < height; y++) {
+                var point = new Point(x, y);
+                if (cellType(point)['box'])
+                    boxes.add(point);
+            }
+        }
+        return boxes;
+    }
+
     String toString() {
         String out = '    ';
         for (var i = 0; i < width; i++)
@@ -74,28 +86,16 @@ class GameMap {
     }
 }
 
-class ComplexCheck {
-    GameMap _map;
-    BombsWatcher _bombsWatcher;
-
-    ComplexCheck(this._map, this._bombsWatcher);
-
-    bool isObstacle(Point cell) {
-        return _map.isOutOfMap(cell.x, cell.y) || _map.cellType(cell)['obstacle'] || _bombsWatcher.isBomb(cell);
-    }
-}
-
 class Game {
     Map<int, Map> players = {};
     int myId;
-    Point target/* = new Point(2, 2)*/, targetPos/* = new Point(2, 3)*/, myLocation;
+    Point target = new Point(2, 4), targetPos = new Point(3, 4), myLocation;
     GameMap map;
-    BombsWatcher bombsWatcher;
+    GameState gameState;
     Map targetType = {'box': true};
     String nextAction;
     Point nextStep;
     AStar aStar;
-    ComplexCheck complexChecker;
     int lastEnemyBomb = 0;
     int maxBombs = 1;
 
@@ -121,7 +121,7 @@ class Game {
 
     void _readEntities() {
         players.clear();
-        bombsWatcher = new BombsWatcher(map);
+        gameState = new GameState(map);
         int entities = int.parse(stdin.readLineSync());
         Logger.info(entities);
         for (int i = 0; i < entities; i++) {
@@ -135,10 +135,10 @@ class Game {
             if (entityType == 0) {
                 players[owner] = {'pos': pos, 'bombs': param1, 'range': param2};
             } else if (entityType == 1) {
-                bombsWatcher.addBomb(pos, {'owner': owner, 'countdown': param1,
+                gameState.addBomb(pos, {'owner': owner, 'countdown': param1,
                     'range': param2});
             } else if (entityType == 2) {
-                bombsWatcher.addBonus(pos, param1);
+                gameState.addBonus(pos, param1);
             }
         }
     }
@@ -147,7 +147,7 @@ class Game {
         if (target != null && myLocation == target &&
             players[myId]['bombs'] > 0 && targetType['box']) {
             Logger.info('settled a BOMB');
-            bombsWatcher.addBomb(target, {
+            gameState.addBomb(target, {
                 'owner': myId,
                 'countdown': countdown,
                 'range': players[myId]['range']
@@ -159,12 +159,12 @@ class Game {
     }
 
     /*Map _getNextTarget(int step, Point _myLocation) {
-        var affectedBoxes = bombsWatcher.getAffectedBoxes(step);
+        var affectedBoxes = gameState.getAffectedBoxes(step);
         // if no target or target already destroyed or to be destroyed - find new target
         Logger.debug('searching');
-        var spiralProcessor = new SpiralProcessor(bombsWatcher.mapAtStep(step), _myLocation);
+        var spiralProcessor = new SpiralProcessor(gameState.mapAtStep(step), _myLocation);
         var box, boxes = {};
-        var aStar = new AStar(bombsWatcher.mapAtStep(step), bombsWatcher);
+        var aStar = new AStar(gameState.mapAtStep(step), gameState);
         while ((box = spiralProcessor.getNext()) != null) {
             Logger.debug('box near ${box}');
             if (affectedBoxes.contains(box)) {
@@ -174,8 +174,8 @@ class Game {
             var path = aStar.path(myLocation, box);
             if (path == null)
                 continue;
-            var stepsToFreeBomb = bombsWatcher.stepsToFreeBomb(myId, maxBombs);
-            if (bombsWatcher.isDeadPos(path[1], stepsToFreeBomb-path.length-1, stepsToFreeBomb)) {
+            var stepsToFreeBomb = gameState.stepsToFreeBomb(myId, maxBombs);
+            if (gameState.isDeadPos(path[1], stepsToFreeBomb-path.length-1, stepsToFreeBomb)) {
                 Logger.info('we will die if wait at ${path[1]}');
                 continue;
             }
@@ -204,23 +204,23 @@ class Game {
     }*/
 
     void _checkTarget() {
-        var affectedBoxes = bombsWatcher.getAffectedBoxes();
+        var targetBoxes = gameState.getTargetBoxes();
         // if no target or target already destroyed or to be destroyed - find new target
         Logger.debug('searching');
         var spiralProcessor = new SpiralProcessor(map, myLocation);
         var box, boxes = {};
         while ((box = spiralProcessor.getNext()) != null) {
             Logger.debug('box near ${box}');
-            if (affectedBoxes.contains(box)) {
+            if (!targetBoxes.contains(box)) {
                 Logger.info("it's marked as 'to destroy'");
                 continue;
             }
             var path = aStar.path(myLocation, box);
             if (path == null)
                 continue;
-            var stepsToFreeBomb = bombsWatcher.stepsToFreeBomb(myId, maxBombs);
+            var stepsToFreeBomb = gameState.stepsToFreeBomb(myId, maxBombs);
             Logger.debug('is dead ${path} ${stepsToFreeBomb} ${maxBombs}');
-            if (stepsToFreeBomb > 0 && bombsWatcher.isDeadPos(path[1], stepsToFreeBomb-path.length-1, stepsToFreeBomb)) {
+            if (stepsToFreeBomb > 0 && gameState.isDeadPos(path[1], stepsToFreeBomb-path.length-1, stepsToFreeBomb)) {
                 Logger.info('we will die if wait at ${path[1]}');
                 continue;
             }
@@ -238,7 +238,7 @@ class Game {
                 var checkBox = boxes[distances.first];
                 var checkStep = checkBox['path'][checkBox['path'].length-2];
                 Logger.debug('_checkDeadLock ${checkStep}');
-                if (bombsWatcher.isBomb(myLocation) && _checkDeadLock(checkStep)) {
+                if (gameState.isBomb(myLocation) && _checkDeadLock(checkStep)) {
                     distances.removeAt(0);
                     Logger.debug('locked ${distances}');
                     targetBox = null;
@@ -280,11 +280,11 @@ class Game {
         if (directionsClone.length > 2)
             throw new Exception('Only 2 directions must exist ${pos}, ${myLocation}');
         Logger.debug('directions: ${directionsClone}');
-        while (!complexChecker.isObstacle(pos)) {
+        while (!gameState.isObstacle(pos)) {
             var choices = 0, cell;
             for (var direction in directionsClone) {
                 cell = pos + direction;
-                if (complexChecker.isObstacle(cell))
+                if (gameState.isObstacle(cell))
                     continue;
                 Logger.debug('free: ${cell}');
                 choices++;
@@ -299,10 +299,10 @@ class Game {
 
     void _checkOnFire() {
         Logger.debug('_checkOnFire ${nextStep}');
-        var fireSides = bombsWatcher.isOnFire(nextStep);
+        var fireSides = gameState.isOnFire(nextStep);
         if (fireSides.isEmpty)
             return;
-        var currentFireSides = bombsWatcher.isOnFire(myLocation);
+        var currentFireSides = gameState.isOnFire(myLocation);
         if (currentFireSides.isNotEmpty) {
             List<List<int>> directions = [[1, 0], [0, 1], [-1, 0], [0, -1]];
             var choices = [];
@@ -313,7 +313,7 @@ class Game {
                     return;
                 var type = map.cellType(choice);
                 if (currentFireSides.contains(choice) || type['obstacle'] ||
-                    bombsWatcher.isBomb(choice))
+                    gameState.isBomb(choice))
                     return;
                 choices.add(choice);
             });
@@ -350,8 +350,7 @@ class Game {
         Logger.info('loop');
         map.updateFromInput();
         _readEntities();
-        complexChecker = new ComplexCheck(map, bombsWatcher);
-        aStar = new AStar(map, bombsWatcher);
+        aStar = new AStar(gameState);
         myLocation = players[myId]['pos'];
         Logger.debug('before algo');
         targetType = targetPos != null ? map.cellType(targetPos) : null;
@@ -360,7 +359,7 @@ class Game {
         _checkTarget();
         _checkEnemy();
         _checkOnFire();
-        if (bombsWatcher.isBonusBombNextStep(nextStep))
+        if (gameState.isBonusBombNextStep(nextStep))
             maxBombs++;
         print((nextAction != null ? nextAction : 'MOVE') +
             ' ${nextStep.x} ${nextStep.y}');
@@ -368,15 +367,14 @@ class Game {
     }
 }
 
-class BombsWatcher {
+class GameState {
     static final List<List<int>> directions = [[1, 0], [0, 1], [-1, 0], [0, -1]];
     Map<int, GameMap> _mapPerStep = {};
     Map<int, Map<Point, Map>> _bombsPerStep = {};
     Map<int, Map<Point, int>> _bonusesPerStep = {};
     Map<int, List<Point>> _fireCellsPerStep = {};
 
-    BombsWatcher(GameMap map) {
-
+    GameState(GameMap map) {
         _bombsPerStep[0] = {};
         _bonusesPerStep[0] = {};
         _mapPerStep[0] = map;
@@ -390,7 +388,10 @@ class BombsWatcher {
         _bonusesPerStep[0][pos] = type;
     }
 
-    Map<String, List<Point>> _getAffected(Point pos, Map info, int step, {Point custom}) {
+    /**
+     * Get affected items (boxes, bombs, bonuses, cells) by bomb's fire at [pos] on [step].
+     */
+    Map<String, List<Point>> _getAffected(Point pos, Map info, int step) {
         var map = _mapPerStep[step];
         var bombs = _bombsPerStep[step];
         var bonuses = _bonusesPerStep[step];
@@ -561,15 +562,18 @@ class BombsWatcher {
         return _mapPerStep[step];
     }
 
-    List<Point> getAffectedBoxes([int step = 0]) {
-        for (var i = 1; i <= step; i++) {
-            _calcStep(i);
+    List<Point> getTargetBoxes() {
+        var step = 0;
+        while (_bombsPerStep[step].isNotEmpty) {
+            step++;
+            _calcStep(step);
         }
-        List<Point> boxes = [];
-        _bombsPerStep[step].forEach((pos, info) {
-            boxes.addAll(_getAffected(pos, info, step)['boxes']);
-        });
-        return boxes;
+        return _mapPerStep[step].getBoxes();
+    }
+
+    bool isObstacle(Point cell, [int step = 0]) {
+        var map = mapAtStep(step);
+        return map.isOutOfMap(cell.x, cell.y) || map.cellType(cell)['obstacle'] || isBomb(cell, step);
     }
 }
 
@@ -626,16 +630,15 @@ class SpiralProcessor {
 }
 
 class AStar {
-    GameMap _map;
-    BombsWatcher bombsWatcher;
+    GameState gameState;
 
-    AStar(this._map, this.bombsWatcher);
+    AStar(this.gameState);
 
     /**
      * Returns path list from [from] to [to].
      */
     List<Point> path(Point from, Point to) {
-        var map = _map;
+        var map = gameState.mapAtStep(0);
         Logger.debug('searching path ${from} ${to}');
         // game does not support diagonal moves
         var neighborX = [1, 0, -1, 0];
@@ -665,12 +668,11 @@ class AStar {
                 cameFromTmp[neighbor] = current;
                 var path = _getPath(cameFromTmp, neighbor);
                 var step = path.length;
-                map = bombsWatcher.mapAtStep(step+1);
-                var type = map.cellType(neighbor);
+                map = gameState.mapAtStep(step);
                 // boxes are obstacles, but only when it's not target box
-                if (neighbor != to && (type['obstacle'] || bombsWatcher.isBomb(neighbor, step)))
+                if (neighbor != to && gameState.isObstacle(neighbor, step))
                     continue;
-                if (bombsWatcher.isDeadPos(neighbor, step, step))
+                if (gameState.isDeadPos(neighbor, step, step))
                     continue;
                 var tentativeGScore = gScore[current] + 1;
                 if (!openSet.contains(neighbor))
