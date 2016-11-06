@@ -88,7 +88,7 @@ class ComplexCheck {
 class Game {
     Map<int, Map> players = {};
     int myId;
-    Point target, targetPos/* = new Point(9, 0)*/, myLocation;
+    Point target/* = new Point(2, 2)*/, targetPos/* = new Point(2, 3)*/, myLocation;
     GameMap map;
     BombsWatcher bombsWatcher;
     Map targetType = {'box': true};
@@ -258,7 +258,9 @@ class Game {
             Logger.info('toDestroy ${targetPos}');
             Logger.info('nextStep ${nextStep}');
         } else {
-            nextAction = 'MOVE';
+            // if we have placed a bomb near the last box, don't remove it
+            if (nextAction != 'BOMB')
+                nextAction = 'MOVE';
             target = null;
         }
     }
