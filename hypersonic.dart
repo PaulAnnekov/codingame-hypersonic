@@ -89,7 +89,7 @@ class GameMap {
 class Game {
     Map<int, Map> players = {};
     int myId;
-    Point target = new Point(12, 8)/*, targetPos*//* = new Point(3, 4)*/, myLocation;
+    Point target/* = new Point(12, 8)*//*, targetPos*//* = new Point(3, 4)*/, myLocation;
     GameMap map;
     GameState gameState;
     //Map targetType = {'box': true};
@@ -98,16 +98,15 @@ class Game {
     AStar aStar;
     int lastEnemyBomb = 0;
     int maxBombs = 1;
+    Stopwatch watch = new Stopwatch();
 
     void start() {
         map = new GameMap();
         _readInput();
-        Stopwatch watch = new Stopwatch();
         while (true) {
             watch.reset();
             watch.start();
             _loop();
-            Logger.info('loop ms: ${watch.elapsedMilliseconds}');
         }
     }
 
@@ -187,6 +186,9 @@ class Game {
                 continue;
             }*/
             boxes[path.length] = {'path': path};
+            // No need to search for other paths. We are right near box to destroy.
+            if (path.length == 2)
+                break;
         }
         var targetBox;
         // if not the last box where we settled a bomb and no more boxes.
@@ -234,9 +236,23 @@ class Game {
             Map tmp = new Map.from(players);
             tmp.remove(myId);
             var _aStar = new AStar(_gameState);
-            var path = _aStar.path(_myLocation, tmp[tmp.keys.first]['pos']);
+            List<Point> path;
+            while (tmp.isNotEmpty) {
+                var id = tmp.keys.last;
+                var pos = tmp[id]['pos'];
+                if (excludeBoxes.contains(pos)) {
+                    Logger.info('paths. player ${box} is excluded');
+                    continue;
+                }
+                path = _aStar.path(_myLocation, pos);
+                if (path != null)
+                    break;
+                tmp.remove(id);
+            }
+            if (path == null)
+                return null;
             var isSettle = haveBombs && lastEnemyBomb <= 0 && path != null && path.length <= 3;
-            var newState = _gameState.cloneStep(isSettle ? 0 : targetBox['path'].length-1);
+            var newState = _gameState.cloneStep(isSettle ? 0 : path.length-1);
             if (isSettle) {
                 newState.addBombs({_myLocation: {
                     'owner': myId,
@@ -250,8 +266,8 @@ class Game {
                 'action': isSettle ? 'BOMB' : 'MOVE',
                 'nextStep': path != null && path.length > 2 ? path[path.length-2] : _myLocation,
                 'newState': newState,
-                //'destination': targetBox['path'][1],
-                //'target': targetBox['path'][0]
+                'destination': path.length == 1 ? path[0] : path[1],
+                'target': path[0]
             };
         }
         return null;
@@ -402,7 +418,7 @@ class Game {
         if (gameState.isBonusBombNextStep(nextStep))
             maxBombs++;
         print((nextAction != null ? nextAction : 'MOVE') +
-            ' ${nextStep.x} ${nextStep.y}');
+            ' ${nextStep.x} ${nextStep.y} ${watch.elapsedMilliseconds}');
         Logger.debug('end');
     }
 }
@@ -689,6 +705,10 @@ class AStar {
      * Returns path list from [from] to [to].
      */
     List<Point> path(Point from, Point to) {
+        // Can occur when
+        /*if (gameState.isDeadPos(from, 0, 0)) {
+            return null;
+        }*/
         var map = gameState.mapAtStep(0);
         Logger.debug('searching path ${from} ${to}');
         // game does not support diagonal moves
