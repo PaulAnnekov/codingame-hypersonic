@@ -705,10 +705,6 @@ class AStar {
      * Returns path list from [from] to [to].
      */
     List<Point> path(Point from, Point to) {
-        // Can occur when
-        /*if (gameState.isDeadPos(from, 0, 0)) {
-            return null;
-        }*/
         var map = gameState.mapAtStep(0);
         Logger.debug('searching path ${from} ${to}');
         // game does not support diagonal moves
@@ -738,7 +734,7 @@ class AStar {
                 var cameFromTmp = new Map.from(cameFrom);
                 cameFromTmp[neighbor] = current;
                 var path = _getPath(cameFromTmp, neighbor);
-                var step = path.length;
+                var step = path.length-1;
                 map = gameState.mapAtStep(step);
                 // boxes are obstacles, but only when it's not target box
                 if (neighbor != to && gameState.isObstacle(neighbor, step))
