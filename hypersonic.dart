@@ -294,23 +294,36 @@ class Game {
     }
 
     void _checkTarget() {
-        var nextResult, result, exclude = [];
-        var targetBoxes = gameState.getTargetBoxes();
-        // null - can't get to the box, no boxes left, can't get to the box alive
+        List<Map> states = [{
+            'gameState': gameState,
+            'myLocation': myLocation,
+            'exclude': []
+        }];
         do {
-            result = _getNextTarget(gameState, myLocation, targetBoxes, exclude);
+            var state = states.last;
+            // We can go back to recalc previous state, so remove it's previous result
+            state['result'] = null;
+            var previous = states.length > 1 ? states[states.length-2] : null;
+            var targetBoxes = state['gameState'].getTargetBoxes();
+            var result = _getNextTarget(state['gameState'], state['myLocation'], targetBoxes, state['exclude']);
+            // null - can't get to the box, no boxes left, can't get to the box alive
             if (result != null) {
-                var newTargetBoxes = result['newState'].getTargetBoxes();
-                nextResult = _getNextTarget(result['newState'], result['destination'], newTargetBoxes);
-                if (nextResult == null) {
-                    exclude.add(result['target']);
-                }
+                state['result'] = result;
+                states.add({
+                    'gameState': result['newState'],
+                    'myLocation': result['destination'],
+                    'exclude': []
+                });
+            } else if (previous != null) {
+                previous['exclude'].add(previous['result']['target']);
+                states.removeLast();
             }
-        } while (result != null && nextResult == null);
+        } while (states.length < 4 && states.first['result'] != null);
+        var result = states.first['result'];
         if (result != null) {
             // when current action is bomb settlement
             if (result['nextStep'] == null) {
-                result['nextStep'] = nextResult['nextStep'];
+                result['nextStep'] = states[1]['result']['nextStep'];
             }
             target = result['destination'];
             nextAction = result['action'];
