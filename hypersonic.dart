@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math';
+import 'dart:collection';
 
 int range = 3;
 int countdown = 8;
@@ -724,14 +725,15 @@ class AStar {
         var neighborX = [1, 0, -1, 0];
         var neighborY = [0, 1, 0, -1];
         Point current;
-        List<Point> closedSet = [];
-        List<Point> openSet = [from];
-        Map<Point, Point> cameFrom = {};
         var gScore = {from: 0};
         var fScore = {from: from.distanceTo(to)};
+        List<Point> closedSet = [];
+        SplayTreeSet<Point> openSet = new SplayTreeSet((first, second) => (fScore[first] - fScore[second]).round(),
+            (key) => fScore[key] != null);
+        openSet.add(from);
+        Map<Point, Point> cameFrom = {};
         while (!openSet.isEmpty) {
-            current = openSet.reduce((first, second) =>
-            fScore[first] < fScore[second] ? first : second);
+            current = openSet.first;
             if (current == to)
                 return _getPath(cameFrom, current);
             openSet.remove(current);
@@ -755,13 +757,13 @@ class AStar {
                 if (gameState.isDeadPos(neighbor, step, step))
                     continue;
                 var tentativeGScore = gScore[current] + 1;
-                if (!openSet.contains(neighbor))
-                    openSet.add(neighbor);
-                else if (tentativeGScore >= gScore[neighbor])
+                if (openSet.contains(neighbor) && tentativeGScore >= gScore[neighbor])
                     continue;
                 cameFrom[neighbor] = current;
                 gScore[neighbor] = tentativeGScore;
                 fScore[neighbor] = gScore[neighbor] + neighbor.distanceTo(to);
+                if (!openSet.contains(neighbor))
+                    openSet.add(neighbor);
             }
         }
         Logger.debug('not found');
