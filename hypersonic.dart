@@ -555,7 +555,9 @@ class GameState {
         return maxBombs - _bombsPerStep[step].values.where((bomb) => bomb['owner'] == owner).length;
     }
 
-    bool isDeadPos(Point pos, int stepFrom, int stepTo) {
+    bool isDeadPos(Point pos, [int stepFrom = 0, int stepTo]) {
+        if (stepTo == null)
+            stepTo = stepFrom;
         for (var i = 0; i <= stepTo; i++, _calcStep(i)) {
             if (i >= stepFrom && _fireCellsPerStep[i].contains(pos)) {
                 return true;
@@ -824,7 +826,9 @@ class AStar {
                         continue;
                     waitTime = gameState.getBombCountdown(neighbor);
                 }
-                if (gameState.isDeadPos(neighbor, step, step))
+                // Bombs are exploding on the next step before movement defined on previous one, so check if this
+                // position is on fire on the next step.
+                if (gameState.isDeadPos(neighbor, step+1))
                     continue;
                 /**/
                 var tentativeGScore = gScore[current] + 1 + waitTime;
