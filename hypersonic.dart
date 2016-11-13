@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:math';
-import 'dart:collection';
 
 int range = 3;
 int countdown = 8;
@@ -163,20 +162,23 @@ class Game {
         if (excludeBoxes == null) {
             excludeBoxes = [];
         }
+        // TODO: can happen when we wait for free bomb near our bomb.
+        if (_gameState.isDeadPos(_myLocation, 0, 0))
+            return null;
         AStar _aStar = new AStar(_gameState);
         var map = _gameState.mapAtStep(0);
         var spiralProcessor = new SpiralProcessor(map, _myLocation);
         var box, boxes = {};
         while ((box = spiralProcessor.getNext()) != null) {
             if (!targetBoxes.contains(box)) {
-                Logger.info("paths. ${box} marked as 'to destroy'");
+                Logger.debug("paths. ${box} marked as 'to destroy'");
                 continue;
             }
             if (excludeBoxes.contains(box)) {
-                Logger.info('paths. ${box} is excluded');
+                Logger.debug('paths. ${box} is excluded');
                 continue;
             }
-            Logger.info('paths. path to ${box}');
+            Logger.debug('paths. path to ${box}');
             var path = _aStar.path(_myLocation, box);
             if (path == null)
                 continue;
@@ -190,6 +192,10 @@ class Game {
             // No need to search for other paths. We are right near box to destroy.
             if (path.length == 2)
                 break;
+            // TODO: optimize to get more w/o much time
+            if (boxes.length > 3) {
+                break;
+            }
         }
         var targetBox;
         // if not the last box where we settled a bomb and no more boxes.
@@ -200,15 +206,29 @@ class Game {
             targetBox = boxes[distances[0]];
             var target = targetBox['path'][1];
             var isSettle = distances[0] == 2;
-            var newState = _gameState.cloneStep(isSettle ? 0 : targetBox['path'].length-1);
+            var nextStep, newStep = targetBox['path'].length-2, action = 'MOVE';
+            var haveBombs = _gameState.freeBombsAtStep(myId, maxBombs, newStep) > 0;
+            if (!haveBombs) {
+                // TODO: if we don't have a bomb, but staying just near we get wrong value.
+                nextStep = targetBox['path'][targetBox['path'].length - 2];
+                // TODO: maxBombs can change during moving and finding bonuses. Move to GameState.
+                newStep = max(newStep, _gameState.stepsToFreeBomb(myId, maxBombs));
+            } else if (isSettle) {
+                nextStep = null;
+                newStep = 0;
+                action = 'BOMB';
+            } else {
+                nextStep = targetBox['path'][targetBox['path'].length - 2];
+            }
+            var newState = _gameState.cloneStep(newStep);
             newState.addBombs({target: {
                 'owner': myId,
                 'countdown': countdown,
                 'range': players[myId]['range']
             }});
             return {
-                'action': isSettle ? 'BOMB' : 'MOVE',
-                'nextStep': isSettle ? null : targetBox['path'][targetBox['path'].length - 2],
+                'action': action,
+                'nextStep': nextStep,
                 'destination': targetBox['path'][1],
                 'newState': newState,
                 'target': targetBox['path'][0]
@@ -229,10 +249,10 @@ class Game {
                 }
             }*/
             // TODO: move to _checkTarget
-            lastEnemyBomb = 0;
+            //lastEnemyBomb = 0;
         } else {
             // TODO: move to _checkTarget
-            lastEnemyBomb--;
+            //lastEnemyBomb--;
             var haveBombs = players[myId]['bombs'] > 0;
             Map tmp = new Map.from(players);
             tmp.remove(myId);
@@ -252,7 +272,7 @@ class Game {
             }
             if (path == null)
                 return null;
-            var isSettle = haveBombs && lastEnemyBomb <= 0 && path != null && path.length <= 3;
+            var isSettle = haveBombs && /*lastEnemyBomb <= 0 && */path != null && path.length <= 3;
             var newState = _gameState.cloneStep(isSettle ? 0 : path.length-1);
             if (isSettle) {
                 newState.addBombs({_myLocation: {
@@ -261,7 +281,7 @@ class Game {
                     'range': players[myId]['range']
                 }});
                 // TODO: move to _checkTarget
-                lastEnemyBomb = 3;
+                //lastEnemyBomb = 3;
             }
             return {
                 'action': isSettle ? 'BOMB' : 'MOVE',
@@ -319,6 +339,7 @@ class Game {
                 previous['exclude'].add(previous['result']['target']);
                 states.removeLast();
             }
+            Logger.info('state ${states.length} check: ${watch.elapsedMilliseconds}');
         } while (states.length < 4 && states.first['result'] != null);
         var result = states.first['result'];
         if (result != null) {
@@ -443,10 +464,12 @@ class GameState {
     Map<int, Map<Point, Map>> _bombsPerStep = {};
     Map<int, Map<Point, int>> _bonusesPerStep = {};
     Map<int, List<Point>> _fireCellsPerStep = {};
+    List<Point> _cellsOnFire;
 
     GameState(GameMap map) {
         _bombsPerStep[0] = {};
         _bonusesPerStep[0] = {};
+        _fireCellsPerStep[0] = [];
         _mapPerStep[0] = map;
     }
 
@@ -525,9 +548,15 @@ class GameState {
         return step;
     }
 
-    bool isDeadPos(Point pos, int stepFrom, int stepTo) {
-        for (var i = 1; i <= stepTo; i++) {
+    int freeBombsAtStep(int owner, int maxBombs, int step) {
+        for (var i = 1; i <= step; i++) {
             _calcStep(i);
+        }
+        return maxBombs - _bombsPerStep[step].values.where((bomb) => bomb['owner'] == owner).length;
+    }
+
+    bool isDeadPos(Point pos, int stepFrom, int stepTo) {
+        for (var i = 0; i <= stepTo; i++, _calcStep(i)) {
             if (i >= stepFrom && _fireCellsPerStep[i].contains(pos)) {
                 return true;
             }
@@ -578,6 +607,27 @@ class GameState {
         Logger.debug(prevMap);
         Logger.debug(prevBombs);
         Logger.debug(prevBonuses);*/
+    }
+
+    int getBombCountdown(Point bomb) {
+        return _bombsPerStep[0][bomb]['countdown'];
+    }
+
+    /**
+     * Get all cells on fire for all rounds.
+     */
+    List<Point> getCellsOnFire() {
+        if (_cellsOnFire != null)
+            return _cellsOnFire;
+        var step = 0;
+        List<Point> cells = new List.from(_fireCellsPerStep[0]);
+        do {
+            step++;
+            _calcStep(step);
+            cells.addAll(_fireCellsPerStep[step]);
+        } while (_bombsPerStep[step].isNotEmpty);
+        _cellsOnFire = cells;
+        return _cellsOnFire;
     }
 
     /**
@@ -653,6 +703,8 @@ class GameState {
         var newGameState = new GameState(mapAtStep(step));
         newGameState.addBombs(_bombsPerStep[step]);
         newGameState.addBonuses(_bonusesPerStep[step]);
+        // HACK: :(
+        newGameState._fireCellsPerStep[0] = _fireCellsPerStep[step];
         return newGameState;
     }
 }
@@ -712,8 +764,10 @@ class SpiralProcessor {
 
 class AStar {
     GameState gameState;
-
-    AStar(this.gameState);
+    List<Point> _cellsOnFire;
+    AStar(this.gameState) {
+        _cellsOnFire = gameState.getCellsOnFire();
+    }
 
     /**
      * Returns path list from [from] to [to].
@@ -727,15 +781,15 @@ class AStar {
         Point current;
         var gScore = {from: 0};
         var fScore = {from: from.distanceTo(to)};
+        Map<Point, Map> bombWait = {};
         List<Point> closedSet = [];
-        SplayTreeSet<Point> openSet = new SplayTreeSet((first, second) => (fScore[first] - fScore[second]).round(),
-            (key) => fScore[key] != null);
+        List<Point> openSet = [from];
         openSet.add(from);
         Map<Point, Point> cameFrom = {};
         while (!openSet.isEmpty) {
-            current = openSet.first;
+            current = openSet.reduce((first, second) => fScore[first] < fScore[second] ? first : second);
             if (current == to)
-                return _getPath(cameFrom, current);
+                return _getPath(cameFrom, bombWait, current);
             openSet.remove(current);
             closedSet.add(current);
             for (var i = 0; i < 4; i++) {
@@ -746,19 +800,39 @@ class AStar {
                     continue;
                 if (closedSet.contains(neighbor))
                     continue;
+                /**/
                 var cameFromTmp = new Map.from(cameFrom);
                 cameFromTmp[neighbor] = current;
-                var path = _getPath(cameFromTmp, neighbor);
+                var bombWaitTmp = new Map.from(bombWait);
+                bombWaitTmp.remove(neighbor);
+                var path = _getPath(cameFromTmp, bombWaitTmp, neighbor);
                 var step = path.length-1;
                 map = gameState.mapAtStep(step);
+                var waitPoint, waitTime = 0;
                 // boxes are obstacles, but only when it's not target box
-                if (neighbor != to && gameState.isObstacle(neighbor, step))
-                    continue;
+                if (neighbor != to && gameState.isObstacle(neighbor, step)) {
+                    if (!gameState.isBomb(neighbor, step))
+                        continue;
+                    path.any((point) {
+                        if (!_cellsOnFire.contains(point)) {
+                            waitPoint = point;
+                            return true;
+                        }
+                        return false;
+                    });
+                    if (waitPoint == null)
+                        continue;
+                    waitTime = gameState.getBombCountdown(neighbor);
+                }
                 if (gameState.isDeadPos(neighbor, step, step))
                     continue;
-                var tentativeGScore = gScore[current] + 1;
+                /**/
+                var tentativeGScore = gScore[current] + 1 + waitTime;
                 if (openSet.contains(neighbor) && tentativeGScore >= gScore[neighbor])
                     continue;
+                /**/
+                bombWait[neighbor] = {'waitPoint': waitPoint, 'waitTime': waitTime};
+                /**/
                 cameFrom[neighbor] = current;
                 gScore[neighbor] = tentativeGScore;
                 fScore[neighbor] = gScore[neighbor] + neighbor.distanceTo(to);
@@ -770,12 +844,19 @@ class AStar {
         return null;
     }
 
-    List<Point> _getPath(Map cameFrom, Point current) {
+    List<Point> _getPath(Map cameFrom, Map bombWait, Point current) {
         var totalPath = [current];
+        var waitPoints = {};
         while (cameFrom.containsKey(current)) {
+            if (bombWait[current] != null && bombWait[current]['waitPoint'] != null) {
+                waitPoints[bombWait[current]['waitPoint']] = bombWait[current]['waitTime'];
+            }
             current = cameFrom[current];
             totalPath.add(current);
         }
+        waitPoints.forEach((point, time) {
+            totalPath.insertAll(totalPath.indexOf(point), new List.filled(time, point));
+        });
         return totalPath;
     }
 }
