@@ -179,7 +179,7 @@ class Game {
                 continue;
             }
             Logger.debug('paths. path to ${box}');
-            var path = _aStar.path(_myLocation, box);
+            var path = _aStar.path(_myLocation, [box]);
             if (path == null)
                 continue;
             /*var stepsToFreeBomb = gameState.stepsToFreeBomb(myId, maxBombs);
@@ -253,14 +253,19 @@ class Game {
         } else {
             // TODO: move to _checkTarget
             //lastEnemyBomb--;
-            var haveBombs = players[myId]['bombs'] > 0;
-            Map tmp = new Map.from(players);
-            tmp.remove(myId);
+            //var haveBombs = players[myId]['bombs'] > 0;
+            Map enemies = new Map.from(players);
+            enemies.remove(myId);
             var _aStar = new AStar(_gameState);
-            List<Point> path;
-            while (tmp.isNotEmpty) {
-                var id = tmp.keys.last;
-                var pos = tmp[id]['pos'];
+            List<Point> bombPlaces = [];
+            enemies.forEach((id, info) {
+                bombPlaces.addAll(_gameState.getPlayerBombSides(info['pos'], players[myId]['range']));
+            });
+            bombPlaces.removeWhere((point) => excludeBoxes.contains(point));
+            List<Point> path = _aStar.path(_myLocation, bombPlaces);
+            /*while (enemies.isNotEmpty) {
+                var id = enemies.keys.last;
+                var pos = enemies[id]['pos'];
                 if (excludeBoxes.contains(pos)) {
                     Logger.info('paths. player ${box} is excluded');
                     continue;
@@ -268,30 +273,28 @@ class Game {
                 path = _aStar.path(_myLocation, pos);
                 if (path != null)
                     break;
-                tmp.remove(id);
-            }
+                enemies.remove(id);
+            }*/
             if (path == null)
                 return null;
-            var isSettle = haveBombs && /*lastEnemyBomb <= 0 && */path != null && path.length <= 3;
+            var isSettle = path.length == 1/*haveBombs && *//*lastEnemyBomb <= 0 && *//*path != null && path.length <= 3*/;
             var newState = _gameState.cloneStep(isSettle ? 0 : path.length-1);
-            if (isSettle) {
-                newState.addBombs({_myLocation: {
-                    'owner': myId,
-                    'countdown': countdown,
-                    'range': players[myId]['range']
-                }});
-                // TODO: move to _checkTarget
-                //lastEnemyBomb = 3;
-            }
+            newState.addBombs({_myLocation: {
+                'owner': myId,
+                'countdown': countdown,
+                'range': players[myId]['range']
+            }});
+            // TODO: move to _checkTarget
+            //lastEnemyBomb = 3;
             return {
                 'action': isSettle ? 'BOMB' : 'MOVE',
-                'nextStep': path != null && path.length > 2 ? path[path.length-2] : _myLocation,
+                'nextStep': isSettle ? null : path[path.length-2],
                 'newState': newState,
-                'destination': path.length == 1 ? path[0] : path[1],
+                'destination': isSettle ? path[0] : path[1],
                 'target': path[0]
             };
         }
-        return null;
+        //return null;
         /*var nextStep;
         if (targetBox != null) {
             *//*target = targetBox['path'][1];
@@ -521,6 +524,27 @@ class GameState {
         });
 
         return affected;
+    }
+
+    List<Point> getPlayerBombSides(Point pos, int range, [int step = 0]) {
+        for (var i = 1; i <= step; i++) {
+            _calcStep(i);
+        }
+        var map = _mapPerStep[step];
+        List<Point> cells = [];
+        directions.forEach((direction) {
+            for (var i = 1; i < range; i++) {
+                var cell = new Point(
+                    pos.x + direction[0] * i, pos.y + direction[1] * i);
+                if (map.isOutOfMap(cell.x, cell.y))
+                    break;
+                if (isObstacle(cell, step))
+                    break;
+                cells.add(cell);
+            }
+        });
+
+        return cells;
     }
 
     bool isBomb(Point pos, [int step = 0]) {
@@ -774,7 +798,7 @@ class AStar {
     /**
      * Returns path list from [from] to [to].
      */
-    List<Point> path(Point from, Point to) {
+    List<Point> path(Point from, List<Point> to) {
         var map = gameState.mapAtStep(0);
         Logger.debug('searching path ${from} ${to}');
         // game does not support diagonal moves
@@ -782,7 +806,7 @@ class AStar {
         var neighborY = [0, 1, 0, -1];
         Point current;
         var gScore = {from: 0};
-        var fScore = {from: from.distanceTo(to)};
+        var fScore = {from: _distance(from, to)};
         Map<Point, Map> bombWait = {};
         List<Point> closedSet = [];
         List<Point> openSet = [from];
@@ -790,7 +814,7 @@ class AStar {
         Map<Point, Point> cameFrom = {};
         while (!openSet.isEmpty) {
             current = openSet.reduce((first, second) => fScore[first] < fScore[second] ? first : second);
-            if (current == to)
+            if (to.contains(current))
                 return _getPath(cameFrom, bombWait, current);
             openSet.remove(current);
             closedSet.add(current);
@@ -812,7 +836,7 @@ class AStar {
                 map = gameState.mapAtStep(step);
                 var waitPoint, waitTime = 0;
                 // boxes are obstacles, but only when it's not target box
-                if (neighbor != to && gameState.isObstacle(neighbor, step)) {
+                if (!to.contains(neighbor) && gameState.isObstacle(neighbor, step)) {
                     if (!gameState.isBomb(neighbor, step))
                         continue;
                     path.any((point) {
@@ -839,13 +863,21 @@ class AStar {
                 /**/
                 cameFrom[neighbor] = current;
                 gScore[neighbor] = tentativeGScore;
-                fScore[neighbor] = gScore[neighbor] + neighbor.distanceTo(to);
+                fScore[neighbor] = gScore[neighbor] + _distance(neighbor, to);
                 if (!openSet.contains(neighbor))
                     openSet.add(neighbor);
             }
         }
         Logger.debug('not found');
         return null;
+    }
+
+    double _distance(Point from, List<Point> to) {
+        // TODO: optimize for single [to].
+        return to.fold(double.MAX_FINITE, (min, point) {
+            var distance = point.distanceTo(from);
+            return min > distance ? distance : min;
+        });
     }
 
     List<Point> _getPath(Map cameFrom, Map bombWait, Point current) {
