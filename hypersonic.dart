@@ -191,11 +191,13 @@ class Game {
             enemies.remove(myId);
             var _aStar = new AStar(_gameState);
             List<Point> bombPlaces = [];
+            List<Point> enemiesPos = [];
             enemies.forEach((id, info) {
                 bombPlaces.addAll(_gameState.getPlayerBombSides(info['pos'], players[myId]['range']));
+                enemiesPos.add(info['pos']);
             });
             bombPlaces.removeWhere((point) => excludeBoxes.contains(point));
-            List<Point> path = _aStar.path(_myLocation, bombPlaces);
+            List<Point> path = _aStar.path(_myLocation, bombPlaces, enemiesPos);
             if (path == null)
                 return null;
             var isSettle = path.length == 1;
@@ -379,15 +381,22 @@ class GameState {
         var map = _mapPerStep[step];
         List<Point> cells = [];
         directions.forEach((direction) {
+            var sideCells = [];
             for (var i = 1; i < range; i++) {
                 var cell = new Point(
                     pos.x + direction[0] * i, pos.y + direction[1] * i);
                 if (map.isOutOfMap(cell.x, cell.y))
                     break;
+                // We don't want to set a bomb on this side, if one is already there.
+                if (isBomb(cell, step)) {
+                    sideCells.clear();
+                    break;
+                }
                 if (isObstacle(cell, step))
                     break;
-                cells.add(cell);
+                sideCells.add(cell);
             }
+            cells.addAll(sideCells);
         });
 
         return cells;
@@ -639,7 +648,9 @@ class AStar {
     /**
      * Returns path list from [from] to [to].
      */
-    List<Point> path(Point from, List<Point> to) {
+    List<Point> path(Point from, List<Point> to, [List<Point> obsticles]) {
+        if (obsticles == null)
+            obsticles = [];
         var map = gameState.mapAtStep(0);
         Logger.debug('searching path ${from} ${to}');
         // game does not support diagonal moves
@@ -666,6 +677,8 @@ class AStar {
                 if (map.isOutOfMap(x, y))
                     continue;
                 if (closedSet.contains(neighbor))
+                    continue;
+                if (obsticles.contains(neighbor))
                     continue;
                 /* Game-specific logic start*/
                 var cameFromTmp = new Map.from(cameFrom);
