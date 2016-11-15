@@ -200,7 +200,7 @@ class Game {
                 return null;
             var isSettle = path.length == 1;
             var newState = _gameState.cloneStep(isSettle ? 0 : path.length-1);
-            newState.addBombs({_myLocation: {
+            newState.addBombs({path[0]: {
                 'owner': myId,
                 'countdown': countdown,
                 'range': players[myId]['range']
@@ -209,7 +209,7 @@ class Game {
                 'action': isSettle ? 'BOMB' : 'MOVE',
                 'nextStep': isSettle ? null : path[path.length-2],
                 'newState': newState,
-                'destination': isSettle ? path[0] : path[1],
+                'destination': path[0],
                 'target': path[0]
             };
         }
