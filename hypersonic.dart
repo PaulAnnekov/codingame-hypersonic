@@ -151,8 +151,11 @@ class Game {
         if (_gameState.isDeadPos(_myLocation, 0, 0))
             return null;
         AStar _aStar = new AStar(_gameState);
+        var targetBox;
         targetBoxes.removeWhere((box) => excludeBoxes.contains(box));
-        var targetBox = _aStar.path(_myLocation, targetBoxes);
+        if (targetBoxes.isNotEmpty) {
+            targetBox = _aStar.path(_myLocation, targetBoxes);
+        }
         if (targetBox != null) {
             var target = targetBox[1];
             var isSettle = targetBox.length == 2;
