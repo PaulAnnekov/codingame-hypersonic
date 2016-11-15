@@ -96,6 +96,7 @@ class Game {
     Point nextStep;
     AStar aStar;
     int lastEnemyBomb = 0;
+    // TODO: calc must be: owner.free bombs + all owner bombs on map
     int maxBombs = 1;
     Stopwatch watch = new Stopwatch();
 
@@ -150,45 +151,16 @@ class Game {
         if (_gameState.isDeadPos(_myLocation, 0, 0))
             return null;
         AStar _aStar = new AStar(_gameState);
-        var map = _gameState.mapAtStep(0);
-        var spiralProcessor = new SpiralProcessor(map, _myLocation);
-        var box, boxes = {};
-        while ((box = spiralProcessor.getNext()) != null) {
-            if (!targetBoxes.contains(box)) {
-                Logger.debug("paths. ${box} marked as 'to destroy'");
-                continue;
-            }
-            if (excludeBoxes.contains(box)) {
-                Logger.debug('paths. ${box} is excluded');
-                continue;
-            }
-            Logger.debug('paths. path to ${box}');
-            var path = _aStar.path(_myLocation, [box]);
-            if (path == null)
-                continue;
-            boxes[path.length] = {'path': path};
-            // No need to search for other paths. We are right near box to destroy.
-            if (path.length == 2)
-                break;
-            // TODO: optimize to get more w/o much time
-            if (boxes.length > 3) {
-                break;
-            }
-        }
-        var targetBox;
-        // if not the last box where we settled a bomb and no more boxes.
-        if (boxes.isNotEmpty) {
-            var distances = boxes.keys.toList();
-            Logger.debug('boxes ${boxes}, distances ${distances}');
-            distances.sort();
-            targetBox = boxes[distances[0]];
-            var target = targetBox['path'][1];
-            var isSettle = distances[0] == 2;
-            var nextStep, newStep = targetBox['path'].length-2, action = 'MOVE';
+        targetBoxes.removeWhere((box) => excludeBoxes.contains(box));
+        var targetBox = _aStar.path(_myLocation, targetBoxes);
+        if (targetBox != null) {
+            var target = targetBox[1];
+            var isSettle = targetBox.length == 2;
+            var nextStep, newStep = targetBox.length-2, action = 'MOVE';
             var haveBombs = _gameState.freeBombsAtStep(myId, maxBombs, newStep) > 0;
             if (!haveBombs) {
                 // TODO: if we don't have a bomb, but staying just near we get wrong value.
-                nextStep = targetBox['path'][targetBox['path'].length - 2];
+                nextStep = targetBox[targetBox.length - 2];
                 // TODO: maxBombs can change during moving and finding bonuses. Move to GameState.
                 newStep = max(newStep, _gameState.stepsToFreeBomb(myId, maxBombs));
             } else if (isSettle) {
@@ -196,7 +168,7 @@ class Game {
                 newStep = 0;
                 action = 'BOMB';
             } else {
-                nextStep = targetBox['path'][targetBox['path'].length - 2];
+                nextStep = targetBox[targetBox.length - 2];
             }
             var newState = _gameState.cloneStep(newStep);
             newState.addBombs({target: {
@@ -207,9 +179,9 @@ class Game {
             return {
                 'action': action,
                 'nextStep': nextStep,
-                'destination': targetBox['path'][1],
+                'destination': targetBox[1],
                 'newState': newState,
-                'target': targetBox['path'][0]
+                'target': targetBox[0]
             };
         } else {
             Map enemies = new Map.from(players);
@@ -223,7 +195,7 @@ class Game {
             List<Point> path = _aStar.path(_myLocation, bombPlaces);
             if (path == null)
                 return null;
-            var isSettle = path.length == 1/*haveBombs && *//*lastEnemyBomb <= 0 && *//*path != null && path.length <= 3*/;
+            var isSettle = path.length == 1;
             var newState = _gameState.cloneStep(isSettle ? 0 : path.length-1);
             newState.addBombs({_myLocation: {
                 'owner': myId,
@@ -246,6 +218,7 @@ class Game {
             'myLocation': myLocation,
             'exclude': []
         }];
+        Logger.info('checkTarget: ${watch.elapsedMilliseconds}');
         do {
             var state = states.last;
             // We can go back to recalc previous state, so remove it's previous result
