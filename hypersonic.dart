@@ -59,12 +59,12 @@ class GameMap {
         return newMap;
     }
 
-    List<Point> getBoxes() {
+    List<Point> getByType(String type) {
         var boxes = [];
         for (int x = 0; x < width; x++) {
             for (int y = 0; y < height; y++) {
                 var point = new Point(x, y);
-                if (cellType(point)['box'])
+                if (cellType(point)[type])
                     boxes.add(point);
             }
         }
@@ -186,20 +186,18 @@ class Game {
                 'newState': newState,
                 'target': targetBox[0]
             };
-        } else {
-            Map enemies = new Map.from(players);
-            enemies.remove(myId);
-            var _aStar = new AStar(_gameState);
-            List<Point> bombPlaces = [];
-            List<Point> enemiesPos = [];
-            enemies.forEach((id, info) {
-                bombPlaces.addAll(_gameState.getPlayerBombSides(info['pos'], players[myId]['range']));
-                enemiesPos.add(info['pos']);
-            });
-            bombPlaces.removeWhere((point) => excludeBoxes.contains(point));
-            List<Point> path = _aStar.path(_myLocation, bombPlaces, enemiesPos);
-            if (path == null)
-                return null;
+        }
+        Map enemies = new Map.from(players);
+        enemies.remove(myId);
+        List<Point> bombPlaces = [];
+        List<Point> enemiesPos = [];
+        enemies.forEach((id, info) {
+            bombPlaces.addAll(_gameState.getPlayerBombSides(info['pos'], players[myId]['range']));
+            enemiesPos.add(info['pos']);
+        });
+        bombPlaces.removeWhere((point) => excludeBoxes.contains(point));
+        List<Point> path = _aStar.path(_myLocation, bombPlaces, enemiesPos);
+        if (path != null) {
             var isSettle = path.length == 1;
             var newState = _gameState.cloneStep(isSettle ? 0 : path.length-1);
             newState.addBombs({path[0]: {
@@ -215,6 +213,20 @@ class Game {
                 'target': path[0]
             };
         }
+        var freeCells = _gameState.getFreeCells();
+        freeCells.removeWhere((point) => excludeBoxes.contains(point));
+        path = _aStar.path(_myLocation, freeCells);
+        if (path != null) {
+            var newState = _gameState.cloneStep(path.length-1);
+            return {
+                'action': 'MOVE',
+                'nextStep': path.length == 1 ? path.last : path[path.length-2],
+                'newState': newState,
+                'destination': path[0],
+                'target': path[0]
+            };
+        }
+        return null;
     }
 
     void _checkTarget() {
@@ -508,6 +520,16 @@ class GameState {
     }
 
     /**
+     * Get free cells for all rounds.
+     */
+    List<Point> getFreeCells() {
+        var fire = getCellsOnFire();
+        var cells = _mapPerStep[0].getByType('free');
+        cells.removeWhere((cell) => fire.contains(cell));
+        return cells;
+    }
+
+    /**
      * Is point will be destroyed on next step.
      */
     List<Point> isOnFire(Point point) {
@@ -565,7 +587,7 @@ class GameState {
             step++;
             _calcStep(step);
         }
-        return _mapPerStep[step].getBoxes();
+        return _mapPerStep[step].getByType('box');
     }
 
     bool isObstacle(Point cell, [int step = 0]) {
